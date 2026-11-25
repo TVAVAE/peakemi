@@ -1,6 +1,7 @@
 #pragma once
 
 #include <peakemi/ui/IPlotBackend.h>
+#include <peakemi/ui/Theme.h>
 
 #include <QPoint>
 #include <QWidget>
@@ -40,6 +41,12 @@ public:
     void autoScale() override;
 
     void setMarkers(const QVector<PlotMarker>& markers) override;
+    void setSettingsSummary(const QStringList& items) override;
+
+    /// Draw the display in @p scheme rather than in the interface's current
+    /// one. The report sets Light: it is printed on white paper whatever the
+    /// operator's screen looked like.
+    void setDisplayScheme(std::optional<Scheme> scheme);
 
     [[nodiscard]] QImage renderToImage(QSize size) const override;
     [[nodiscard]] bool exportSvg(const QString& path, QSize size) const override;
@@ -82,8 +89,13 @@ private:
     [[nodiscard]] double fromX(const Layout& layout, double x) const;
     [[nodiscard]] double fromY(const Layout& layout, double y) const;
 
+    [[nodiscard]] DisplayColours colours() const;
+    [[nodiscard]] QColor colourFor(PlotRole role, const QColor& fallback) const;
+
     void render(QPainter& painter, QSize size) const;
+    void drawSettingsBar(QPainter& painter, QSize size) const;
     void drawGrid(QPainter& painter, const Layout& layout) const;
+    void drawFooter(QPainter& painter, const Layout& layout) const;
     void drawSeries(QPainter& painter, const Layout& layout, const PlotSeries& series) const;
     void drawMarkers(QPainter& painter, const Layout& layout) const;
     void drawLegend(QPainter& painter, const Layout& layout) const;
@@ -93,6 +105,8 @@ private:
 
     std::vector<PlotSeries> m_series;
     QVector<PlotMarker> m_markers;
+    QStringList m_settings;
+    std::optional<Scheme> m_scheme;
     QString m_amplitudeLabel{QStringLiteral("dBuV")};
 
     double m_frequencyStart{30e6};

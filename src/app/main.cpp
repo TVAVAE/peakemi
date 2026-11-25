@@ -3,6 +3,7 @@
 #include <peakemi/core/Version.h>
 #include <peakemi/drivers/SimulatedDriver.h>
 #include <peakemi/ui/MainWindow.h>
+#include <peakemi/ui/Theme.h>
 
 #include <QApplication>
 #include <QCommandLineOption>
@@ -68,6 +69,9 @@ int main(int argc, char* argv[])
     // platform and in every packaging of the application. AboutDialog.cpp pulls
     // the resource into the link.
     QApplication::setWindowIcon(QIcon{QStringLiteral(":/peakemi/icon.png")});
+
+    // Light or dark as the system is, and switching with it.
+    peakemi::ui::installTheme(application);
 
     peakemi::ui::MainWindow window;
     window.show();

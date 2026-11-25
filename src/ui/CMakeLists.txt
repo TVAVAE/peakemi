@@ -14,6 +14,7 @@ peakemi_add_module(ui
         models/RunController.cpp
         plot/PainterPlotBackend.cpp
         plot/SessionPlot.cpp
+        theme/Theme.cpp
         windows/MainWindow.cpp
     HEADERS
         include/peakemi/ui/AboutDialog.h
@@ -29,6 +30,7 @@ peakemi_add_module(ui
         include/peakemi/ui/RunConfigDock.h
         include/peakemi/ui/RunController.h
         include/peakemi/ui/SessionPlot.h
+        include/peakemi/ui/Theme.h
     PUBLIC
         peakemi::core
         peakemi::hal

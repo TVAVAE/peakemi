@@ -71,6 +71,8 @@ InstrumentDock::InstrumentDock(QWidget* parent) : QDockWidget{tr("Instruments"),
 
     auto* buttons = new QHBoxLayout;
     m_connectButton = new QPushButton{tr("Connect"), content};
+    // Drawn in the accent colour by the application stylesheet, if one is set.
+    m_connectButton->setProperty("primary", true);
     m_disconnectButton = new QPushButton{tr("Disconnect"), content};
     m_disconnectButton->setEnabled(false);
     buttons->addWidget(m_connectButton);

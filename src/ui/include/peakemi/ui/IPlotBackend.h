@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <cstdint>
@@ -22,6 +23,20 @@ enum class PlotStyle : std::uint8_t
     Points
 };
 
+/// What a series or marker stands for. A backend may draw a role in colours of
+/// its own -- the theme's, so they follow it between light and dark -- and
+/// falls back on the explicit colour for Custom.
+enum class PlotRole : std::uint8_t
+{
+    Custom,
+    Trace,
+    Limit,
+    Verified,
+    Marker,
+    MarkerFail,
+    MarkerMarginal
+};
+
 /// One curve in the plot: a live trace, a max-hold, a reference or a limit line.
 struct PlotSeries
 {
@@ -33,6 +48,7 @@ struct PlotSeries
     qreal width{1.0};
     /// x = frequency in hertz, y = amplitude in the plot's unit.
     QVector<QPointF> points;
+    PlotRole role{PlotRole::Custom};
 };
 
 /// A flagged peak or a user marker.
@@ -42,6 +58,7 @@ struct PlotMarker
     QPointF position; ///< (frequency in hertz, amplitude)
     QColor colour{Qt::red};
     bool selected{false};
+    PlotRole role{PlotRole::Custom};
 };
 
 /// The plot abstraction of CON-3 / FR-VIS-1.
@@ -74,6 +91,11 @@ public:
     virtual void autoScale() = 0;
 
     virtual void setMarkers(const QVector<PlotMarker>& markers) = 0;
+
+    /// The instrument settings behind the trace, one "Key value" item each
+    /// ("RBW 120 kHz", "Det QP"), for a backend that shows them the way an
+    /// analyzer does above its display. Optional: the default ignores them.
+    virtual void setSettingsSummary(const QStringList& items) { Q_UNUSED(items) }
 
     /// Off-screen render for the PDF report and the PNG export (FR-VIS-5).
     [[nodiscard]] virtual QImage renderToImage(QSize size) const = 0;
