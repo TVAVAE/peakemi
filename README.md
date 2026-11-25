@@ -111,6 +111,13 @@ QT_QPA_PLATFORM=offscreen ./build/debug/bin/peakemi_screenshots docs/images --da
   or the Verification span field in the run configuration), which is what routes Phase 2
   to the receiver. Over a swept verification span the dwell is divided across its points
   instead of being spent at the frequency, which matters for impulsive emissions.
+
+  The Rohde & Schwarz FSL3, FSL6 and FSL18 (`rohdeschwarz.fsl`) are driven in their
+  spectrum-analyzer mode over VXI-11. The driver reads `*OPT?` to decide what to offer: the
+  9 kHz, 120 kHz and 1 MHz EMI filters and the quasi-peak detector always, the 200 Hz EMI
+  filter of CISPR band A only with the R&S FSL-B7 narrow filters, and the preamplifier
+  only with R&S FSL-B22. It is written from the operating manual and not yet verified
+  against an instrument; see [docs/instruments/rs-fsl.md](docs/instruments/rs-fsl.md).
 * **Python driver plugins**: in a build configured with `PEAKEMI_WITH_PYTHON=ON`, a
   driver can be a single Python file loaded into the embedded interpreter, and the
   measurement engine cannot tell it from one written in C++. A plugin is

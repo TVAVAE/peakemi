@@ -1,3 +1,4 @@
+#include <peakemi/drivers/RohdeSchwarzFslDriver.h>
 #include <peakemi/drivers/ScpiAnalyzerDriver.h>
 #include <peakemi/drivers/SimulatedDriver.h>
 #include <peakemi/drivers/UnitrendFscanDriver.h>
@@ -40,6 +41,12 @@ void registerBuiltInDrivers()
         hal::DriverRegistry::Entry{.info = makeUnitrendUtsDriver()->info(),
                                    .matcher = hal::makeMatcher("UNI-T", {"UTS3*"}),
                                    .factory = &makeUnitrendUtsDriver});
+
+    // *IDN? names the vendor "Rohde&Schwarz" and the model "FSL-6".
+    registry.registerDriver(
+        hal::DriverRegistry::Entry{.info = makeRohdeSchwarzFslDriver()->info(),
+                                   .matcher = hal::makeMatcher("Rohde&Schwarz", {"FSL*"}),
+                                   .factory = &makeRohdeSchwarzFslDriver});
 }
 
 } // namespace peakemi::drivers
