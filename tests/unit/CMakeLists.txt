@@ -38,6 +38,10 @@ peakemi_add_test(drivers
     SOURCES DriversTest.cpp
     LIBS    peakemi::drivers)
 
+peakemi_add_test(rohdeschwarz_fsl
+    SOURCES RohdeSchwarzFslTest.cpp
+    LIBS    peakemi::drivers)
+
 peakemi_add_test(plugins
     SOURCES PluginTest.cpp
     LIBS    peakemi::python)

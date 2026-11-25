@@ -2,11 +2,13 @@ peakemi_add_module(drivers
     SOURCES
         BuiltInDrivers.cpp
         scpi/InstrumentProfiles.cpp
+        scpi/RohdeSchwarzFslDriver.cpp
         scpi/ScpiAnalyzerDriver.cpp
         scpi/UnitrendFscanDriver.cpp
         simulated/SimulatedDriver.cpp
     HEADERS
         include/peakemi/drivers/InstrumentProfiles.h
+        include/peakemi/drivers/RohdeSchwarzFslDriver.h
         include/peakemi/drivers/ScpiAnalyzerDriver.h
         include/peakemi/drivers/SimulatedDriver.h
         include/peakemi/drivers/UnitrendFscanDriver.h
