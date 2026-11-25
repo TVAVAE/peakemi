@@ -39,6 +39,66 @@ QVector<QPointF> tracePoints(const Trace& trace)
     return points;
 }
 
+namespace {
+
+[[nodiscard]] QString formatBandwidth(Hertz bandwidth)
+{
+    const auto hertz = static_cast<double>(bandwidth.value());
+    if (hertz >= 1e6) {
+        return QStringLiteral("%1 MHz").arg(hertz / 1e6, 0, 'g', 4);
+    }
+    if (hertz >= 1e3) {
+        return QStringLiteral("%1 kHz").arg(hertz / 1e3, 0, 'g', 4);
+    }
+    return QStringLiteral("%1 Hz").arg(hertz, 0, 'g', 4);
+}
+
+/// The abbreviations an analyzer shows next to its trace.
+[[nodiscard]] QString detectorAbbreviation(Detector detector)
+{
+    switch (detector) {
+        case Detector::Peak:
+            return QStringLiteral("PK");
+        case Detector::QuasiPeak:
+            return QStringLiteral("QP");
+        case Detector::Average:
+            return QStringLiteral("AV");
+        case Detector::Rms:
+            return QStringLiteral("RMS");
+        case Detector::Sample:
+            return QStringLiteral("SA");
+    }
+    return {};
+}
+
+} // namespace
+
+QStringList settingsSummary(const SweepParams& params, AmplitudeUnit unit)
+{
+    const auto unitKey = amplitudeUnitKey(unit);
+    const auto unitText = QString::fromUtf8(unitKey.data(), static_cast<qsizetype>(unitKey.size()));
+
+    QStringList items;
+    items << (params.rbw > Hertz{0} ? QStringLiteral("RBW %1").arg(formatBandwidth(params.rbw))
+                                    : QStringLiteral("RBW auto"));
+    if (params.vbw > Hertz{0}) {
+        items << QStringLiteral("VBW %1").arg(formatBandwidth(params.vbw));
+    }
+    items << QStringLiteral("Det %1").arg(detectorAbbreviation(params.detector));
+    items << QStringLiteral("Ref %1 %2").arg(params.refLevel.value(), 0, 'f', 1).arg(unitText);
+    items << (params.automaticAttenuation
+                  ? QStringLiteral("Att auto")
+                  : QStringLiteral("Att %1 dB").arg(params.attenuation.value(), 0, 'f', 0));
+    if (params.preamp) {
+        items << QStringLiteral("Preamp on");
+    }
+    if (params.sweepTime.count() > 0) {
+        items << QStringLiteral("SWT %1 ms").arg(params.sweepTime.count());
+    }
+    items << QStringLiteral("Pts %1").arg(params.points);
+    return items;
+}
+
 QVector<QPointF> limitPoints(const LimitLine& limit, FrequencyRange span)
 {
     QVector<QPointF> points;
@@ -71,8 +131,8 @@ void showSession(IPlotBackend& plot, const Session& session)
         series.id = QStringLiteral("limit:%1").arg(QString::fromStdString(limit.name));
         series.label = QString::fromStdString(limit.name);
         series.colour = limitColour();
-        series.style = PlotStyle::Dashed;
-        series.width = 1.5;
+        series.role = PlotRole::Limit;
+        series.width = 1.6;
         series.points = limitPoints(limit, session.config.span);
         plot.setSeries(series);
     }
@@ -87,8 +147,13 @@ void showSession(IPlotBackend& plot, const Session& session)
         series.id = QStringLiteral("trace:live");
         series.label = QString::fromStdString(trace.label);
         series.colour = traceColour();
+        series.role = PlotRole::Trace;
         series.points = tracePoints(trace);
         plot.setSeries(series);
+        plot.setSettingsSummary(settingsSummary(trace.params, trace.unit));
+    } else {
+        plot.setSettingsSummary(
+            settingsSummary(session.config.phase1SweepParams(session.config.span), unit));
     }
     plot.setAmplitudeLabel(QString::fromUtf8(
         amplitudeUnitKey(unit).data(), static_cast<qsizetype>(amplitudeUnitKey(unit).size())));
@@ -97,6 +162,7 @@ void showSession(IPlotBackend& plot, const Session& session)
         PlotSeries verified;
         verified.id = QStringLiteral("phase2");
         verified.colour = verifiedPointColour();
+        verified.role = PlotRole::Verified;
         verified.style = PlotStyle::Points;
         verified.width = 7.0;
         verified.points.reserve(static_cast<qsizetype>(session.results.size()));
@@ -117,6 +183,8 @@ QImage renderSessionSpectrum(const Session& session, QSize size)
     // image, so nothing about this needs a window or a compositor.
     PainterPlotBackend plot;
     plot.resize(size);
+    // The report is printed on white paper, whatever the screen looked like.
+    plot.setDisplayScheme(Scheme::Light);
     showSession(plot, session);
     return plot.renderToImage(size);
 }

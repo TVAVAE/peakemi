@@ -21,11 +21,14 @@
 #include <peakemi/ui/PainterPlotBackend.h>
 #include <peakemi/ui/ResultsDock.h>
 #include <peakemi/ui/RunConfigDock.h>
+#include <peakemi/ui/Theme.h>
 
 #include <QAction>
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFont>
+#include <QFontDatabase>
 #include <QPalette>
 #include <QPixmap>
 #include <QSettings>
@@ -38,36 +41,6 @@
 #include <functional>
 
 namespace {
-
-/// A dark palette close to what a system dark theme produces, for rendering
-/// the interface the way a dark-mode user sees it.
-[[nodiscard]] QPalette darkPalette()
-{
-    const QColor window{0x1E, 0x1E, 0x1E};
-    const QColor base{0x14, 0x14, 0x14};
-    const QColor text{0xE6, 0xE6, 0xE6};
-    const QColor highlight{0x2D, 0x6C, 0xDF};
-
-    QPalette palette;
-    palette.setColor(QPalette::Window, window);
-    palette.setColor(QPalette::WindowText, text);
-    palette.setColor(QPalette::Base, base);
-    palette.setColor(QPalette::AlternateBase, window);
-    palette.setColor(QPalette::Text, text);
-    palette.setColor(QPalette::Button, window);
-    palette.setColor(QPalette::ButtonText, text);
-    palette.setColor(QPalette::ToolTipBase, base);
-    palette.setColor(QPalette::ToolTipText, text);
-    palette.setColor(QPalette::Highlight, highlight);
-    palette.setColor(QPalette::Link, QColor{0x4D, 0x9B, 0xFF});
-    palette.setColor(QPalette::LinkVisited, QColor{0xB4, 0x8E, 0xFF});
-    palette.setColor(QPalette::HighlightedText, Qt::white);
-    palette.setColor(QPalette::Mid, QColor{0x3A, 0x3A, 0x3A});
-    palette.setColor(QPalette::Shadow, QColor{0x50, 0x50, 0x50});
-    palette.setColor(QPalette::Disabled, QPalette::Text, QColor{0x8A, 0x8A, 0x8A});
-    palette.setColor(QPalette::Disabled, QPalette::WindowText, QColor{0x8A, 0x8A, 0x8A});
-    return palette;
-}
 
 QTextStream& out()
 {
@@ -160,12 +133,17 @@ try {
         arguments.append(QString::fromLocal8Bit(argv[i]));
     }
     const bool dark = arguments.removeAll(QStringLiteral("--dark")) > 0;
+    // The offscreen platform has no system theme to follow, so the scheme is
+    // forced: the same theme the application installs, in the colours asked for.
     if (dark) {
-        // The hint alone does not repaint anything under the offscreen
-        // platform, which has no system theme to follow, so the palette is set
-        // explicitly. This is also what a user running a dark Qt style has.
         QGuiApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
-        QApplication::setPalette(darkPalette());
+    }
+    peakemi::ui::installTheme(application,
+                              dark ? peakemi::ui::Scheme::Dark : peakemi::ui::Scheme::Light);
+    // Offscreen on Windows takes the first font it finds in QT_QPA_FONTDIR;
+    // the application itself gets Segoe UI there.
+    if (QFontDatabase::hasFamily(QStringLiteral("Segoe UI"))) {
+        QApplication::setFont(QFont{QStringLiteral("Segoe UI"), 9});
     }
 
     const QString directory =

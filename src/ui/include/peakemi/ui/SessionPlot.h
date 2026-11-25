@@ -9,6 +9,7 @@
 #include <QImage>
 #include <QPointF>
 #include <QSize>
+#include <QStringList>
 #include <QVector>
 
 namespace peakemi::ui {
@@ -27,6 +28,10 @@ namespace peakemi::ui {
 [[nodiscard]] QColor verifiedPointColour();
 
 [[nodiscard]] QVector<QPointF> tracePoints(const Trace& trace);
+
+/// The settings a trace was measured with, as the plot's settings bar shows
+/// them: "RBW 120 kHz", "Det QP", "Ref 80.0 dBuV", "Att auto", "Pts 8001".
+[[nodiscard]] QStringList settingsSummary(const SweepParams& params, AmplitudeUnit unit);
 
 /// Sampled densely enough that a logarithmic frequency axis stays smooth.
 [[nodiscard]] QVector<QPointF> limitPoints(const LimitLine& limit, FrequencyRange span);

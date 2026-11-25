@@ -22,6 +22,7 @@
 #include <peakemi/ui/RunConfigDock.h>
 #include <peakemi/ui/RunController.h>
 #include <peakemi/ui/SessionPlot.h>
+#include <peakemi/ui/Theme.h>
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -41,6 +42,7 @@
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QToolButton>
 
 #include <algorithm>
 
@@ -115,7 +117,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent}
             &RunController::instrumentIdentified,
             this,
             [this](const InstrumentId& identity) {
-                m_instrumentStatus->setText(QString::fromStdString(identity.displayName()));
+                setInstrumentStatus(QString::fromStdString(identity.displayName()), true);
                 log(tr("Connected to %1").arg(QString::fromStdString(identity.displayName())));
             });
 
@@ -143,6 +145,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent}
 
     m_session.config = m_configDock->configuration();
     m_controller->setConfiguration(m_session.config);
+    updatePlotSettings();
     updateActionStates();
     updateWindowTitle();
     log(tr("PeakEmi %1 started. Connect the simulated analyzer to try a run without hardware.")
@@ -307,12 +310,67 @@ void MainWindow::createToolBar()
     auto* toolBar = addToolBar(tr("Run"));
     toolBar->setObjectName(QStringLiteral("runToolBar"));
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    toolBar->setIconSize(QSize{16, 16});
+    toolBar->setMovable(false);
     toolBar->addAction(m_startAction);
     toolBar->addAction(m_pauseAction);
     toolBar->addAction(m_abortAction);
     toolBar->addSeparator();
     toolBar->addAction(m_autoScaleAction);
     toolBar->addAction(m_reportAction);
+
+    // The one action every run starts with gets the accent colour.
+    if (auto* start = toolBar->widgetForAction(m_startAction)) {
+        start->setObjectName(QStringLiteral("primaryToolButton"));
+    }
+    refreshThemeIcons();
+}
+
+void MainWindow::refreshThemeIcons()
+{
+    // A palette change can arrive while the window is still being built.
+    if (m_startAction == nullptr || m_reportAction == nullptr) {
+        return;
+    }
+    const Theme theme = currentTheme();
+    m_startAction->setIcon(toolIcon(ToolIcon::Start, theme.accentText));
+    m_pauseAction->setIcon(toolIcon(ToolIcon::Pause, theme.text));
+    m_abortAction->setIcon(toolIcon(ToolIcon::Abort, theme.fail));
+    m_autoScaleAction->setIcon(toolIcon(ToolIcon::AutoScale, theme.text));
+    m_reportAction->setIcon(toolIcon(ToolIcon::Report, theme.text));
+}
+
+void MainWindow::changeEvent(QEvent* event)
+{
+    // The icons are painted in the theme's colours, so they are painted again
+    // when Windows switches between light and dark.
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) {
+        refreshThemeIcons();
+    }
+    QMainWindow::changeEvent(event);
+}
+
+void MainWindow::setInstrumentStatus(const QString& text, bool connected)
+{
+    m_instrumentStatus->setText(connected ? QStringLiteral("● %1").arg(text) : text);
+    m_instrumentStatus->setProperty(
+        "state", connected ? QStringLiteral("connected") : QStringLiteral("disconnected"));
+    repolish(m_instrumentStatus);
+}
+
+void MainWindow::updatePlotSettings()
+{
+    // What the trace on screen was measured with, or, before there is one,
+    // what the next run will use.
+    if (!m_session.traces.empty()) {
+        const auto& trace = m_session.traces.back();
+        m_plot->setSettingsSummary(settingsSummary(trace.params, trace.unit));
+        return;
+    }
+    const auto unit = m_session.config.limits.empty() ? AmplitudeUnit::dBuV
+                                                      : m_session.config.limits.front().unit;
+    m_plot->setSettingsSummary(
+        settingsSummary(m_session.config.phase1SweepParams(m_session.config.span), unit));
 }
 
 void MainWindow::createDocks()
@@ -332,6 +390,7 @@ void MainWindow::createDocks()
         m_session.config = m_configDock->configuration();
         m_controller->setConfiguration(m_session.config);
         showLimitOverlays();
+        updatePlotSettings();
         m_dirty = true;
         updateWindowTitle();
     });
@@ -365,13 +424,19 @@ void MainWindow::createDocks()
 void MainWindow::createStatusBar()
 {
     m_instrumentStatus = new QLabel{tr("No instrument connected"), this};
+    m_instrumentStatus->setObjectName(QStringLiteral("instrumentStatus"));
+    m_instrumentStatus->setProperty("state", QStringLiteral("disconnected"));
     m_phaseStatus = new QLabel{phaseName(MeasurementEngine::Phase::Idle), this};
+    m_phaseStatus->setObjectName(QStringLiteral("phaseStatus"));
+    m_phaseStatus->setProperty("phase", QStringLiteral("idle"));
     m_cursorStatus = new QLabel{QString{}, this};
+    m_cursorStatus->setObjectName(QStringLiteral("cursorStatus"));
     m_progress = new QProgressBar{this};
     m_progress->setMaximumWidth(220);
     m_progress->setVisible(false);
 
-    statusBar()->addWidget(m_instrumentStatus, 1);
+    // Permanent, so a status message never hides which instrument is connected.
+    statusBar()->addPermanentWidget(m_instrumentStatus);
     statusBar()->addPermanentWidget(m_cursorStatus);
     statusBar()->addPermanentWidget(m_phaseStatus);
     statusBar()->addPermanentWidget(m_progress);
@@ -439,8 +504,8 @@ void MainWindow::showLimitOverlays()
         series.id = QStringLiteral("limit:%1").arg(QString::fromStdString(limit.name));
         series.label = QString::fromStdString(limit.name);
         series.colour = limitColour();
-        series.style = PlotStyle::Dashed;
-        series.width = 1.5;
+        series.role = PlotRole::Limit;
+        series.width = 1.6;
         series.points = limitPoints(limit, m_session.config.span);
         m_plot->setSeries(series);
     }
@@ -537,7 +602,7 @@ void MainWindow::onConnectionChanged(bool connected)
     if (connected) {
         m_configDock->applyCapabilities(m_controller->capabilities());
     } else {
-        m_instrumentStatus->setText(tr("No instrument connected"));
+        setInstrumentStatus(tr("No instrument connected"), false);
     }
     updateActionStates();
 }
@@ -546,6 +611,28 @@ void MainWindow::onPhaseChanged(MeasurementEngine::Phase phase)
 {
     m_phase = phase;
     m_phaseStatus->setText(phaseName(phase));
+
+    QString state = QStringLiteral("idle");
+    switch (phase) {
+        case MeasurementEngine::Phase::Phase1Sweep:
+        case MeasurementEngine::Phase::PeakAnalysis:
+        case MeasurementEngine::Phase::Phase2Dwell:
+        case MeasurementEngine::Phase::Paused:
+            state = QStringLiteral("running");
+            break;
+        case MeasurementEngine::Phase::Finished:
+            state = QStringLiteral("finished");
+            break;
+        case MeasurementEngine::Phase::Failed:
+        case MeasurementEngine::Phase::Aborted:
+            state = QStringLiteral("failed");
+            break;
+        case MeasurementEngine::Phase::Idle:
+        case MeasurementEngine::Phase::Configured:
+            break;
+    }
+    m_phaseStatus->setProperty("phase", state);
+    repolish(m_phaseStatus);
     updateActionStates();
 }
 
@@ -560,9 +647,11 @@ void MainWindow::onTraceAcquired(const TracePtr& trace)
     series.id = QStringLiteral("trace:live");
     series.label = tr("Phase 1 scan");
     series.colour = traceColour();
+    series.role = PlotRole::Trace;
     series.points = tracePoints(*trace);
     m_plot->setSeries(series);
     m_plot->setAmplitudeLabel(qs(amplitudeUnitKey(trace->unit)));
+    m_plot->setSettingsSummary(settingsSummary(trace->params, trace->unit));
     m_plot->autoScale();
 
     m_dirty = true;
@@ -591,7 +680,9 @@ void MainWindow::refreshMarkers()
             .position = QPointF{static_cast<double>(peak.frequency.value()), peak.amplitude},
             .colour =
                 peak.verdict == Verdict::Fail ? QColor{0xC0, 0x39, 0x2B} : QColor{0xF9, 0xAB, 0x00},
-            .selected = peak.frequency == m_selectedFrequency});
+            .selected = peak.frequency == m_selectedFrequency,
+            .role =
+                peak.verdict == Verdict::Fail ? PlotRole::MarkerFail : PlotRole::MarkerMarginal});
     }
     m_plot->setMarkers(markers);
 }
@@ -605,6 +696,7 @@ void MainWindow::onPointMeasured(const MeasurementPoint& point)
     verified.id = QStringLiteral("phase2");
     verified.label = tr("Verified points");
     verified.colour = verifiedPointColour();
+    verified.role = PlotRole::Verified;
     verified.style = PlotStyle::Points;
     for (const auto& stored : m_resultsDock->points()) {
         verified.points.append(
@@ -729,6 +821,7 @@ void MainWindow::newSession()
     m_resultsDock->clear();
     m_plot->clearSeries();
     showLimitOverlays();
+    updatePlotSettings();
     updateActionStates();
     updateWindowTitle();
 }
@@ -768,11 +861,13 @@ void MainWindow::openSessionFile(const QString& path)
         series.id = QStringLiteral("trace:live");
         series.label = QString::fromStdString(trace.label);
         series.colour = traceColour();
+        series.role = PlotRole::Trace;
         series.points = tracePoints(trace);
         m_plot->setSeries(series);
         m_plot->setAmplitudeLabel(qs(amplitudeUnitKey(trace.unit)));
         m_plot->autoScale();
     }
+    updatePlotSettings();
     updateActionStates();
     updateWindowTitle();
     log(tr("Opened %1").arg(path));

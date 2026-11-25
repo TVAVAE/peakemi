@@ -42,6 +42,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private slots:
     void newSession();
@@ -86,6 +87,9 @@ private:
 
     void updateActionStates();
     void updateWindowTitle();
+    void refreshThemeIcons();
+    void setInstrumentStatus(const QString& text, bool connected);
+    void updatePlotSettings();
     void showLimitOverlays();
     void refreshMarkers();
     void log(const QString& message);

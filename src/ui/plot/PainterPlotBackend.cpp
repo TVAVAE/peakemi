@@ -17,10 +17,22 @@ namespace peakemi::ui {
 namespace {
 
 constexpr double LeftMargin = 62.0;
-constexpr double RightMargin = 14.0;
-constexpr double TopMargin = 14.0;
-constexpr double BottomMargin = 40.0;
+constexpr double RightMargin = 16.0;
+/// Room above the display for the amplitude unit.
+constexpr double TopMargin = 18.0;
+/// Room below it for the frequency labels and the start/span/stop line.
+constexpr double BottomMargin = 58.0;
+/// The settings bar along the top, drawn when there are settings to show.
+constexpr double Padding = 8.0;
+constexpr double BarHeight = 24.0;
 constexpr double MinimumSpanHz = 1000.0;
+
+/// @p colour at @p alpha, for the boxes drawn over the trace.
+[[nodiscard]] QColor translucent(QColor colour, int alpha)
+{
+    colour.setAlpha(alpha);
+    return colour;
+}
 
 [[nodiscard]] QString formatFrequency(double hertz)
 {
@@ -187,13 +199,53 @@ void PainterPlotBackend::setMarkers(const QVector<PlotMarker>& markers)
     update();
 }
 
+void PainterPlotBackend::setSettingsSummary(const QStringList& items)
+{
+    m_settings = items;
+    update();
+}
+
+void PainterPlotBackend::setDisplayScheme(std::optional<Scheme> scheme)
+{
+    m_scheme = scheme;
+    update();
+}
+
+DisplayColours PainterPlotBackend::colours() const
+{
+    return themeFor(m_scheme.value_or(currentScheme())).display;
+}
+
+QColor PainterPlotBackend::colourFor(PlotRole role, const QColor& fallback) const
+{
+    const auto display = colours();
+    switch (role) {
+        case PlotRole::Trace:
+            return display.trace;
+        case PlotRole::Limit:
+            return display.limit;
+        case PlotRole::Verified:
+            return display.verified;
+        case PlotRole::Marker:
+            return display.marker;
+        case PlotRole::MarkerFail:
+            return display.markerFail;
+        case PlotRole::MarkerMarginal:
+            return display.markerMarginal;
+        case PlotRole::Custom:
+            break;
+    }
+    return fallback;
+}
+
 PainterPlotBackend::Layout PainterPlotBackend::layoutFor(QSize size) const
 {
+    const double top = TopMargin + (m_settings.isEmpty() ? 0.0 : Padding + BarHeight + 4.0);
     Layout layout;
     layout.plotArea = QRectF{LeftMargin,
-                             TopMargin,
+                             top,
                              std::max(10.0, size.width() - LeftMargin - RightMargin),
-                             std::max(10.0, size.height() - TopMargin - BottomMargin)};
+                             std::max(10.0, size.height() - top - BottomMargin)};
     layout.frequencyStart = m_frequencyStart;
     layout.frequencyStop = m_frequencyStop;
     layout.amplitudeMinimum = m_amplitudeMinimum;
@@ -247,11 +299,80 @@ double PainterPlotBackend::fromY(const Layout& layout, double y) const
     return layout.amplitudeMinimum + fraction * (layout.amplitudeMaximum - layout.amplitudeMinimum);
 }
 
+void PainterPlotBackend::drawSettingsBar(QPainter& painter, QSize size) const
+{
+    if (m_settings.isEmpty()) {
+        return;
+    }
+    const auto display = colours();
+    const QRectF bar{Padding, Padding, size.width() - 2.0 * Padding, BarHeight};
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(display.barBackground);
+    painter.drawRoundedRect(bar, 4.0, 4.0);
+    painter.setBrush(Qt::NoBrush);
+
+    QFont valueFont = painter.font();
+    valueFont.setBold(true);
+    const QFontMetricsF keyMetrics{painter.font()};
+    const QFontMetricsF valueMetrics{valueFont};
+    const double baseline =
+        bar.top() + (bar.height() + keyMetrics.ascent() - keyMetrics.descent()) / 2.0;
+
+    // "RBW 120 kHz": the key muted, the value emphasised, as an analyzer
+    // labels the settings above its display.
+    double x = bar.left() + 10.0;
+    for (int i = 0; i < m_settings.size(); ++i) {
+        const QString& item = m_settings[i];
+        const auto space = item.indexOf(QLatin1Char(' '));
+        const QString key = space < 0 ? QString{} : item.left(space);
+        const QString value = space < 0 ? item : item.mid(space + 1);
+        const double width = (key.isEmpty() ? 0.0 : keyMetrics.horizontalAdvance(key) + 5.0) +
+                             valueMetrics.horizontalAdvance(value);
+        if (x + width > bar.right() - 6.0) {
+            break;
+        }
+        if (i > 0) {
+            painter.setPen(QPen{display.frame, 1.0});
+            painter.drawLine(QPointF{x - 9.0, bar.top() + 6.0},
+                             QPointF{x - 9.0, bar.bottom() - 6.0});
+        }
+        if (!key.isEmpty()) {
+            painter.setPen(display.mutedText);
+            painter.drawText(QPointF{x, baseline}, key);
+            x += keyMetrics.horizontalAdvance(key) + 5.0;
+        }
+        painter.save();
+        painter.setFont(valueFont);
+        painter.setPen(display.barText);
+        painter.drawText(QPointF{x, baseline}, value);
+        painter.restore();
+        x += valueMetrics.horizontalAdvance(value) + 18.0;
+    }
+}
+
+void PainterPlotBackend::drawFooter(QPainter& painter, const Layout& layout) const
+{
+    const auto display = colours();
+    const QFontMetricsF metrics{painter.font()};
+    const double y = layout.plotArea.bottom() + 2.0 * metrics.height() + 10.0;
+    const auto start = tr("Start %1").arg(formatFrequency(layout.frequencyStart));
+    const auto stop = tr("Stop %1").arg(formatFrequency(layout.frequencyStop));
+    const auto span =
+        tr("Span %1").arg(formatFrequency(layout.frequencyStop - layout.frequencyStart));
+
+    painter.setPen(display.mutedText);
+    painter.drawText(QPointF{layout.plotArea.left(), y}, start);
+    painter.drawText(
+        QPointF{layout.plotArea.center().x() - metrics.horizontalAdvance(span) / 2.0, y}, span);
+    painter.drawText(QPointF{layout.plotArea.right() - metrics.horizontalAdvance(stop), y}, stop);
+}
+
 void PainterPlotBackend::drawGrid(QPainter& painter, const Layout& layout) const
 {
-    const QColor gridColour = palette().color(QPalette::Mid);
-    const QColor textColour = palette().color(QPalette::Text);
-    painter.setPen(QPen{palette().color(QPalette::Shadow), 1.0});
+    const auto display = colours();
+    const QColor gridColour = display.graticule;
+    const QColor textColour = display.text;
+    painter.setPen(QPen{display.frame, 1.0});
     painter.drawRect(layout.plotArea);
 
     const QFontMetricsF metrics{painter.font()};
@@ -314,8 +435,8 @@ void PainterPlotBackend::drawGrid(QPainter& painter, const Layout& layout) const
                          label);
     }
 
-    painter.setPen(textColour);
-    painter.drawText(QPointF{6.0, layout.plotArea.top() - 2.0}, m_amplitudeLabel);
+    painter.setPen(display.mutedText);
+    painter.drawText(QPointF{6.0, layout.plotArea.top() - 4.0}, m_amplitudeLabel);
 }
 
 void PainterPlotBackend::drawSeries(QPainter& painter,
@@ -326,7 +447,8 @@ void PainterPlotBackend::drawSeries(QPainter& painter,
         return;
     }
 
-    QPen pen{series.colour, series.width};
+    const QColor colour = colourFor(series.role, series.colour);
+    QPen pen{colour, series.width};
     if (series.style == PlotStyle::Dashed) {
         pen.setStyle(Qt::DashLine);
     }
@@ -387,10 +509,14 @@ void PainterPlotBackend::drawSeries(QPainter& painter,
 
     painter.setClipRect(layout.plotArea);
     if (series.style == PlotStyle::Points) {
+        // A ring filled with the display colour, so it reads on top of the trace.
+        painter.setPen(QPen{colour, 1.8});
+        painter.setBrush(colours().background);
         for (const auto& point : series.points) {
             const QPointF position{toX(layout, point.x()), toY(layout, point.y())};
-            painter.drawEllipse(position, 3.0, 3.0);
+            painter.drawEllipse(position, 3.5, 3.5);
         }
+        painter.setBrush(Qt::NoBrush);
     } else {
         QPainterPath path;
         bool started = false;
@@ -414,22 +540,33 @@ void PainterPlotBackend::drawSeries(QPainter& painter,
 
 void PainterPlotBackend::drawMarkers(QPainter& painter, const Layout& layout) const
 {
+    const auto display = colours();
     const QFontMetricsF metrics{painter.font()};
     for (const auto& marker : m_markers) {
         const QPointF position{toX(layout, marker.position.x()), toY(layout, marker.position.y())};
         if (!layout.plotArea.contains(position)) {
             continue;
         }
-        painter.setPen(QPen{marker.colour, marker.selected ? 2.0 : 1.0});
-        painter.setBrush(marker.selected ? QBrush{marker.colour} : QBrush{Qt::NoBrush});
+        const QColor colour = colourFor(marker.role, marker.colour);
+        painter.setPen(QPen{colour, marker.selected ? 2.0 : 1.2});
+        painter.setBrush(marker.selected ? QBrush{colour} : QBrush{display.background});
         const QPolygonF flag{
             {position, position + QPointF{-5.0, -9.0}, position + QPointF{5.0, -9.0}}};
         painter.drawPolygon(flag);
         if (!marker.label.isEmpty()) {
-            painter.setBrush(Qt::NoBrush);
-            painter.drawText(position +
-                                 QPointF{-metrics.horizontalAdvance(marker.label) / 2.0, -12.0},
-                             marker.label);
+            // A small boxed readout, so the label stays legible where it lands
+            // on the trace or on a neighbouring marker.
+            const double width = metrics.horizontalAdvance(marker.label);
+            const QPointF text = position + QPointF{-width / 2.0, -14.0};
+            const QRectF box{text.x() - 3.0,
+                             text.y() - metrics.ascent() - 1.0,
+                             width + 6.0,
+                             metrics.height() + 2.0};
+            painter.setPen(QPen{translucent(colour, 160), 1.0});
+            painter.setBrush(translucent(display.background, 215));
+            painter.drawRoundedRect(box, 3.0, 3.0);
+            painter.setPen(colour);
+            painter.drawText(text, marker.label);
         }
     }
     painter.setBrush(Qt::NoBrush);
@@ -437,20 +574,46 @@ void PainterPlotBackend::drawMarkers(QPainter& painter, const Layout& layout) co
 
 void PainterPlotBackend::drawLegend(QPainter& painter, const Layout& layout) const
 {
+    const auto display = colours();
     const QFontMetricsF metrics{painter.font()};
-    double y = layout.plotArea.top() + 6.0;
+
+    double widest = 0.0;
+    int rows = 0;
+    for (const auto& series : m_series) {
+        if (series.visible && !series.label.isEmpty()) {
+            widest = std::max(widest, metrics.horizontalAdvance(series.label));
+            ++rows;
+        }
+    }
+    if (rows == 0) {
+        return;
+    }
+
+    const double rowHeight = metrics.height() + 3.0;
+    const QRectF box{layout.plotArea.right() - widest - 44.0,
+                     layout.plotArea.top() + 8.0,
+                     widest + 36.0,
+                     rows * rowHeight + 8.0};
+    painter.setPen(QPen{display.frame, 1.0});
+    painter.setBrush(translucent(display.background, 225));
+    painter.drawRoundedRect(box, 4.0, 4.0);
+    painter.setBrush(Qt::NoBrush);
+
+    double y = box.top() + 4.0;
     for (const auto& series : m_series) {
         if (!series.visible || series.label.isEmpty()) {
             continue;
         }
-        const double width = metrics.horizontalAdvance(series.label) + 28.0;
-        const double x = layout.plotArea.right() - width - 6.0;
-        painter.setPen(QPen{series.colour, 2.0});
-        painter.drawLine(QPointF{x, y + metrics.height() / 2.0},
-                         QPointF{x + 18.0, y + metrics.height() / 2.0});
-        painter.setPen(palette().color(QPalette::Text));
-        painter.drawText(QPointF{x + 22.0, y + metrics.height() * 0.75}, series.label);
-        y += metrics.height() + 2.0;
+        const double x = box.left() + 8.0;
+        QPen pen{colourFor(series.role, series.colour), 2.0};
+        if (series.style == PlotStyle::Dashed) {
+            pen.setStyle(Qt::DashLine);
+        }
+        painter.setPen(pen);
+        painter.drawLine(QPointF{x, y + rowHeight / 2.0}, QPointF{x + 16.0, y + rowHeight / 2.0});
+        painter.setPen(display.text);
+        painter.drawText(QPointF{x + 22.0, y + rowHeight * 0.75}, series.label);
+        y += rowHeight;
     }
 }
 
@@ -459,32 +622,46 @@ void PainterPlotBackend::drawCursor(QPainter& painter, const Layout& layout) con
     if (!m_cursor || !layout.plotArea.contains(*m_cursor)) {
         return;
     }
-    painter.setPen(QPen{palette().color(QPalette::Highlight), 1.0, Qt::DashLine});
+    const auto display = colours();
+    painter.setPen(QPen{display.cursor, 1.0, Qt::DashLine});
     painter.drawLine(QPointF{m_cursor->x(), layout.plotArea.top()},
                      QPointF{m_cursor->x(), layout.plotArea.bottom()});
     painter.drawLine(QPointF{layout.plotArea.left(), m_cursor->y()},
                      QPointF{layout.plotArea.right(), m_cursor->y()});
 
-    const auto label = QStringLiteral("%1  %2 %3")
+    const auto label = QStringLiteral("%1   %2 %3")
                            .arg(formatFrequency(fromX(layout, m_cursor->x())),
                                 QString::number(fromY(layout, m_cursor->y()), 'f', 1),
                                 m_amplitudeLabel);
-    painter.setPen(palette().color(QPalette::Text));
-    painter.drawText(QPointF{layout.plotArea.left() + 6.0, layout.plotArea.top() + 14.0}, label);
+    const QFontMetricsF metrics{painter.font()};
+    const QRectF box{layout.plotArea.left() + 8.0,
+                     layout.plotArea.top() + 8.0,
+                     metrics.horizontalAdvance(label) + 14.0,
+                     metrics.height() + 8.0};
+    painter.setPen(QPen{display.frame, 1.0});
+    painter.setBrush(translucent(display.background, 225));
+    painter.drawRoundedRect(box, 4.0, 4.0);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(display.text);
+    painter.drawText(QPointF{box.left() + 7.0, box.top() + 4.0 + metrics.ascent()}, label);
 }
 
 void PainterPlotBackend::render(QPainter& painter, QSize size) const
 {
+    const auto display = colours();
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.fillRect(QRectF{QPointF{0.0, 0.0}, QSizeF{size}}, palette().color(QPalette::Base));
+    painter.fillRect(QRectF{QPointF{0.0, 0.0}, QSizeF{size}}, display.surround);
 
     const Layout layout = layoutFor(size);
+    drawSettingsBar(painter, size);
+    painter.fillRect(layout.plotArea, display.background);
     drawGrid(painter, layout);
     for (const auto& series : m_series) {
         drawSeries(painter, layout, series);
     }
     drawMarkers(painter, layout);
     drawLegend(painter, layout);
+    drawFooter(painter, layout);
 }
 
 void PainterPlotBackend::paintEvent(QPaintEvent* /*event*/)
@@ -503,7 +680,7 @@ void PainterPlotBackend::resizeEvent(QResizeEvent* event)
 QImage PainterPlotBackend::renderToImage(QSize size) const
 {
     QImage image{size, QImage::Format_ARGB32_Premultiplied};
-    image.fill(palette().color(QPalette::Base));
+    image.fill(colours().surround);
     QPainter painter{&image};
     render(painter, size);
     return image;

@@ -83,6 +83,10 @@ QT_QPA_PLATFORM=offscreen ./build/debug/bin/peakemi_screenshots docs/images
 QT_QPA_PLATFORM=offscreen ./build/debug/bin/peakemi_screenshots docs/images --dark
 ```
 
+On Windows, also set `QT_QPA_FONTDIR=C:\Windows\Fonts`: the offscreen platform finds no fonts
+there on its own. The application follows the system's light or dark setting; `--dark` renders
+the dark variant.
+
 ## What works today
 
 * **Two-phase automated run**: fast peak scan, peak flagging against the active limit
