@@ -42,6 +42,10 @@ peakemi_add_test(rohdeschwarz_fsl
     SOURCES RohdeSchwarzFslTest.cpp
     LIBS    peakemi::drivers)
 
+peakemi_add_test(campaign
+    SOURCES CampaignTest.cpp
+    LIBS    peakemi::reporting)
+
 peakemi_add_test(plugins
     SOURCES PluginTest.cpp
     LIBS    peakemi::python)

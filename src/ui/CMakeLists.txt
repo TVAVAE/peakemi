@@ -6,18 +6,22 @@ peakemi_add_module(ui
         dialogs/AboutDialog.cpp
         dialogs/PluginManagerDialog.cpp
         dialogs/ReportTemplateDialog.cpp
+        docks/CampaignDock.cpp
         docks/InstrumentDock.cpp
         docks/LogDock.cpp
         docks/ResultsDock.cpp
         docks/RunConfigDock.cpp
         models/ResultsTableModel.cpp
         models/RunController.cpp
+        plot/CampaignPlot.cpp
         plot/PainterPlotBackend.cpp
         plot/SessionPlot.cpp
         theme/Theme.cpp
         windows/MainWindow.cpp
     HEADERS
         include/peakemi/ui/AboutDialog.h
+        include/peakemi/ui/CampaignDock.h
+        include/peakemi/ui/CampaignPlot.h
         include/peakemi/ui/IPlotBackend.h
         include/peakemi/ui/InstrumentDock.h
         include/peakemi/ui/LogDock.h

@@ -73,7 +73,16 @@ void MainWindowTest::menusExposeTheMainWorkflows()
 {
     ui::MainWindow window;
     const auto menus = window.menuBar()->actions();
-    QCOMPARE(menus.size(), 4); // File, Run, View, Help
+    QCOMPARE(menus.size(), 5); // File, Run, View, Campaign, Help
+    QCOMPARE(menus.at(3)->text(), QStringLiteral("&Campaign"));
+
+    // The test plan offers every standard template.
+    QStringList templates;
+    for (auto* action : menus.at(3)->menu()->actions().front()->menu()->actions()) {
+        templates.append(action->text());
+    }
+    QVERIFY(templates.filter(QStringLiteral("CISPR 32")).size() == 2);
+    QVERIFY(templates.filter(QStringLiteral("FCC")).size() == 2);
 
     QStringList runActions;
     for (auto* action : menus.at(1)->menu()->actions()) {

@@ -6,6 +6,8 @@ configure_file(
 peakemi_add_module(core
     QT_AUTOMOC
     SOURCES
+        campaign/Campaign.cpp
+        campaign/CampaignSerializer.cpp
         corrections/CorrectionTable.cpp
         domain/Capabilities.cpp
         domain/InstrumentId.cpp
@@ -32,6 +34,8 @@ peakemi_add_module(core
         "${CMAKE_CURRENT_BINARY_DIR}/include/peakemi/core/Version.h"
         include/peakemi/core/AbstractAnalyzerDriver.h
         include/peakemi/core/AtomicFileWriter.h
+        include/peakemi/core/Campaign.h
+        include/peakemi/core/CampaignSerializer.h
         include/peakemi/core/CancelToken.h
         include/peakemi/core/Capabilities.h
         include/peakemi/core/CisprBands.h

@@ -136,6 +136,13 @@ the dark variant.
 * **Limits and corrections**: built-in CISPR 32 / EN 55032 and FCC Part 15 B catalogue,
   CSV/JSON import of custom limits and of antenna/cable/gain correction tables
   (see [`resources/`](resources) for the documented file formats).
+* **Test campaigns**: a lab-style test plan for one equipment under test, started from a
+  standard (CISPR 32 / EN 55032 or FCC Part 15 B, class A or B) with conducted tests on L1
+  and N and radiated tests horizontal and vertical. Each test keeps its measurement, an
+  ambient scan drawn under it, a verdict the operator can override only with a reason,
+  comments, equipment with calibration due dates, setup photos and a signature; the
+  campaign is signed off by tester and reviewer, can be locked, and produces one PDF
+  report. See [docs/campaigns-design.md](docs/campaigns-design.md).
 * **Headless runs for CI**: `peakemi-cli` performs the same measurement from a build
   script, with no display and no window system, and reports the verdict as its exit code —
   0 within the limits, 1 outside them. It writes the session, the CSV and JSON result
