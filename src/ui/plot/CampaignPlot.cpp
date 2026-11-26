@@ -27,8 +27,8 @@ void showTest(IPlotBackend& plot, const CampaignTest& test)
         series.id = QStringLiteral("limit:%1").arg(qs(limit.name));
         series.label = qs(limit.name);
         series.colour = limitColour();
-        series.style = PlotStyle::Dashed;
-        series.width = 1.5;
+        series.role = PlotRole::Limit;
+        series.width = 1.6;
         series.points = limitPoints(limit, config.span);
         plot.setSeries(series);
     }
@@ -53,8 +53,12 @@ void showTest(IPlotBackend& plot, const CampaignTest& test)
         series.id = QStringLiteral("trace:live");
         series.label = trace.label.empty() ? QObject::tr("EUT") : qs(trace.label);
         series.colour = traceColour();
+        series.role = PlotRole::Trace;
         series.points = tracePoints(trace);
         plot.setSeries(series);
+        plot.setSettingsSummary(settingsSummary(trace.params, trace.unit));
+    } else {
+        plot.setSettingsSummary(settingsSummary(config.phase1SweepParams(config.span), unit));
     }
 
     if (test.session && !test.session->results.empty()) {
@@ -62,6 +66,7 @@ void showTest(IPlotBackend& plot, const CampaignTest& test)
         verified.id = QStringLiteral("phase2");
         verified.label = QObject::tr("Verified points");
         verified.colour = verifiedPointColour();
+        verified.role = PlotRole::Verified;
         verified.style = PlotStyle::Points;
         verified.width = 7.0;
         for (const auto& point : test.session->results) {
@@ -80,6 +85,8 @@ QImage renderTestSpectrum(const CampaignTest& test, QSize size)
 {
     PainterPlotBackend plot;
     plot.resize(size);
+    // The report is printed on white paper, whatever the screen looked like.
+    plot.setDisplayScheme(Scheme::Light);
     showTest(plot, test);
     return plot.renderToImage(size);
 }
