@@ -33,6 +33,24 @@ namespace peakemi::ui {
 /// them: "RBW 120 kHz", "Det QP", "Ref 80.0 dBuV", "Att auto", "Pts 8001".
 [[nodiscard]] QStringList settingsSummary(const SweepParams& params, AmplitudeUnit unit);
 
+/// The plot role of a limit line: average limits are drawn apart from the
+/// quasi-peak and peak ones.
+[[nodiscard]] PlotRole limitRole(const LimitLine& limit);
+
+/// A limit line as a plot series, with the marginal zone of @p marginDb
+/// shaded below it.
+[[nodiscard]] PlotSeries limitSeries(const LimitLine& limit, FrequencyRange span, double marginDb);
+
+/// Each verified point's verdict as a plot role, for a points series.
+[[nodiscard]] QVector<PlotRole> verdictRoles(const std::vector<MeasurementPoint>& results);
+
+/// The outcome to print on the plot: per limit line the worst verdict of the
+/// points verified against it, and overall the worst of those. A scan that
+/// flagged nothing passed every limit; no scan, or no limit, shows nothing.
+[[nodiscard]] PlotVerdict plotVerdict(const std::vector<MeasurementPoint>& results,
+                                      const std::vector<LimitLine>& limits,
+                                      bool scanned);
+
 /// Sampled densely enough that a logarithmic frequency axis stays smooth.
 [[nodiscard]] QVector<QPointF> limitPoints(const LimitLine& limit, FrequencyRange span);
 

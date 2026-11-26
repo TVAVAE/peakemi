@@ -36,6 +36,7 @@ struct DisplayColours
     QColor barText;
     QColor trace;
     QColor limit;
+    QColor limitAverage;
     QColor verified;
     QColor marker;
     QColor markerFail;
