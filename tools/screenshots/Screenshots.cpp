@@ -10,11 +10,15 @@
 //
 // It runs headless, so it works in CI and over SSH.
 
+#include <peakemi/core/Campaign.h>
 #include <peakemi/core/LimitCatalogue.h>
 #include <peakemi/core/MeasurementEngine.h>
 #include <peakemi/core/RunConfiguration.h>
 #include <peakemi/drivers/SimulatedDriver.h>
+#include <peakemi/reporting/CampaignReportRenderer.h>
 #include <peakemi/ui/AboutDialog.h>
+#include <peakemi/ui/CampaignDock.h>
+#include <peakemi/ui/CampaignPlot.h>
 #include <peakemi/ui/InstrumentDock.h>
 #include <peakemi/ui/LogDock.h>
 #include <peakemi/ui/MainWindow.h>
@@ -160,6 +164,14 @@ try {
         arguments.append(QString::fromLocal8Bit(argv[i]));
     }
     const bool dark = arguments.removeAll(QStringLiteral("--dark")) > 0;
+    // "--report <file>" also writes the demo campaign's PDF report there.
+    QString reportPath;
+    if (const auto at = arguments.indexOf(QStringLiteral("--report"));
+        at >= 0 && at + 1 < arguments.size())
+    {
+        reportPath = arguments.at(at + 1);
+        arguments.remove(at, 2);
+    }
     if (dark) {
         // The hint alone does not repaint anything under the offscreen
         // platform, which has no system theme to follow, so the palette is set
@@ -246,6 +258,68 @@ try {
     ok = save(about.grab(),
               directory + QStringLiteral("/about-dialog") + suffix + QStringLiteral(".png")) &&
          ok;
+    about.close();
+
+    // A campaign part-way through: the run above filed under the horizontal
+    // radiated test, the conducted tests set aside with a reason.
+    auto* campaignDock = window.findChild<peakemi::ui::CampaignDock*>();
+    auto campaign = peakemi::campaignFromTemplate("cispr32-b", "demo");
+    if (campaignDock == nullptr || !campaign) {
+        out() << "the campaign dock or template is missing" << Qt::endl;
+        return 1;
+    }
+    campaign->title = "Widget v2 – EN 55032 class B pre-scan";
+    campaign->eutName = "Widget v2 controller board";
+    campaign->eutSerial = "W2-0042";
+    campaign->eutOperatingMode = "Display on, Ethernet link up, 12 V DC supply";
+    campaign->location = "Bench 3, semi-anechoic room";
+    campaign->testedBy =
+        peakemi::Signoff{.name = "A. Tester", .at = std::chrono::system_clock::now()};
+    for (auto index : {0, 1}) {
+        (void)campaign->tests[static_cast<std::size_t>(index)].overrideWith(
+            peakemi::TestVerdict::NotApplicable, "DC powered from a lab supply; no AC mains port.");
+    }
+    auto& horizontal = campaign->tests[2];
+    horizontal.session = window.session();
+    horizontal.comments = "Highest emission at 667 MHz, a clock harmonic. Spread-spectrum "
+                          "clocking to be tried on the next revision.";
+    horizontal.equipment = {
+        {.role = "Spectrum analyzer",
+         .model = "PeakEmi Simulated Analyzer",
+         .serial = "SIM-0001",
+         .calibrationDue = "2027-06-30"},
+        {.role = "Antenna",
+         .model = "Biconilog 30 MHz-1 GHz",
+         .serial = "BL-1234",
+         .calibrationDue = "2026-09-30"},
+        {.role = "RF cable", .model = "RG-223, 5 m", .serial = "C-17", .calibrationDue = ""}};
+    horizontal.testedBy =
+        peakemi::Signoff{.name = "A. Tester", .at = std::chrono::system_clock::now()};
+    campaignDock->setCampaign(std::move(*campaign));
+    campaignDock->selectTest(2);
+    campaignDock->raise();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+    ok = save(window.grab(),
+              directory + QStringLiteral("/test-plan-window") + suffix + QStringLiteral(".png")) &&
+         ok;
+    ok = save(campaignDock->grab(),
+              directory + QStringLiteral("/test-plan") + suffix + QStringLiteral(".png")) &&
+         ok;
+
+    if (!reportPath.isEmpty()) {
+        peakemi::reporting::CampaignReportRenderer renderer;
+        renderer.setSpectrumRenderer(&peakemi::ui::renderTestSpectrum);
+        if (auto status =
+                renderer.render(*campaignDock->campaign(), peakemi::ReportTemplate{}, reportPath);
+            !status)
+        {
+            out() << "campaign report failed: " << QString::fromStdString(status.error().message())
+                  << Qt::endl;
+            ok = false;
+        } else {
+            out() << "wrote " << reportPath << Qt::endl;
+        }
+    }
 
     return ok ? 0 : 1;
 } catch (const std::exception& error) {

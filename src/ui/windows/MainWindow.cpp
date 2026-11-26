@@ -7,11 +7,14 @@
 #include <peakemi/hal/TransportFactory.h>
 #include <peakemi/hal/UsbTmcTransport.h>
 #include <peakemi/hal/VisaTransport.h>
+#include <peakemi/reporting/CampaignReportRenderer.h>
 #include <peakemi/reporting/CsvExporter.h>
 #include <peakemi/reporting/JsonExporter.h>
 #include <peakemi/reporting/PdfReportRenderer.h>
 #include <peakemi/reporting/ReportTemplateIo.h>
 #include <peakemi/ui/AboutDialog.h>
+#include <peakemi/ui/CampaignDock.h>
+#include <peakemi/ui/CampaignPlot.h>
 #include <peakemi/ui/InstrumentDock.h>
 #include <peakemi/ui/LogDock.h>
 #include <peakemi/ui/MainWindow.h>
@@ -43,6 +46,7 @@
 #include <QToolBar>
 
 #include <algorithm>
+#include <utility>
 
 namespace peakemi::ui {
 namespace {
@@ -331,6 +335,10 @@ void MainWindow::createDocks()
     connect(m_configDock, &RunConfigDock::configurationChanged, this, [this] {
         m_session.config = m_configDock->configuration();
         m_controller->setConfiguration(m_session.config);
+        // While a campaign test is selected, the run configuration is that test's.
+        if (!m_loadingTest && m_campaignDock != nullptr) {
+            m_campaignDock->setActiveTestConfiguration(m_session.config);
+        }
         showLimitOverlays();
         m_dirty = true;
         updateWindowTitle();
@@ -348,6 +356,25 @@ void MainWindow::createDocks()
     connect(m_logDock, &LogDock::commandEntered, m_controller, &RunController::sendRawCommand);
 
     tabifyDockWidget(m_resultsDock, m_logDock);
+
+    // The test plan sits with the results: wide, under the spectrum.
+    m_campaignDock = new CampaignDock{this};
+    addDockWidget(Qt::BottomDockWidgetArea, m_campaignDock);
+    tabifyDockWidget(m_resultsDock, m_campaignDock);
+    connect(m_campaignDock, &CampaignDock::testSelected, this, &MainWindow::onTestSelected);
+    connect(m_campaignDock, &CampaignDock::runTestRequested, this, &MainWindow::runCampaignTest);
+    connect(m_campaignDock, &CampaignDock::ambientRequested, this, &MainWindow::runAmbientScan);
+    connect(
+        m_campaignDock, &CampaignDock::reportRequested, this, &MainWindow::exportCampaignReport);
+    connect(m_campaignDock, &CampaignDock::statusMessage, this, &MainWindow::log);
+    QAction* helpMenu = nullptr;
+    for (auto* action : menuBar()->actions()) {
+        if (action->menu() != nullptr && action->text() == tr("&Help")) {
+            helpMenu = action;
+        }
+    }
+    menuBar()->insertMenu(helpMenu, m_campaignDock->menu());
+
     m_resultsDock->raise();
 
     auto* viewMenu = menuBar()->findChild<QMenu*>();
@@ -358,6 +385,7 @@ void MainWindow::createDocks()
             action->menu()->addAction(m_configDock->toggleViewAction());
             action->menu()->addAction(m_resultsDock->toggleViewAction());
             action->menu()->addAction(m_logDock->toggleViewAction());
+            action->menu()->addAction(m_campaignDock->toggleViewAction());
         }
     }
 }
@@ -416,6 +444,7 @@ void MainWindow::updateActionStates()
     m_disconnectAction->setEnabled(m_connected && !running);
     m_configDock->setEditingEnabled(!running);
     m_instrumentDock->setConnected(m_connected);
+    m_campaignDock->setRunState(m_connected, running);
 
     const bool hasResults = !m_session.results.empty();
     m_exportResultsAction->setEnabled(hasResults);
@@ -634,6 +663,7 @@ void MainWindow::onProgress(int completed, int total, qint64 estimatedRemainingM
 void MainWindow::onRunFailed(const Error& error)
 {
     m_progress->setVisible(false);
+    m_campaignRun = CampaignRun::None;
     const auto message = QString::fromStdString(error.message());
     log(tr("Run failed: %1").arg(message));
     QMessageBox::warning(this, tr("Run failed"), message);
@@ -648,11 +678,26 @@ void MainWindow::onRunFinished(const Session& session)
     m_dirty = true;
     updateActionStates();
     updateWindowTitle();
+
+    // File what was measured under the campaign test it was measured for.
+    const auto campaignRun = std::exchange(m_campaignRun, CampaignRun::None);
+    if (campaignRun == CampaignRun::Ambient && !m_session.traces.empty()) {
+        m_campaignDock->attachAmbient(m_session.traces.back());
+    } else if (campaignRun == CampaignRun::Test) {
+        Session measured = m_session;
+        const auto first = std::min(m_runFirstTrace, measured.traces.size());
+        measured.traces.erase(measured.traces.begin(),
+                              measured.traces.begin() + static_cast<std::ptrdiff_t>(first));
+        m_campaignDock->attachSession(measured);
+    }
 }
 
 void MainWindow::startRun()
 {
-    m_session.config = m_configDock->configuration();
+    // Taken now, so a run refused below leaves nothing set for the next one.
+    auto campaignRun = std::exchange(m_campaignRun, CampaignRun::None);
+    m_session.config = m_runOverride.value_or(m_configDock->configuration());
+    m_runOverride.reset();
     if (auto status = m_session.config.validate(); !status) {
         QMessageBox::warning(
             this, tr("Configuration incomplete"), QString::fromStdString(status.error().message()));
@@ -682,10 +727,106 @@ void MainWindow::startRun()
     m_plot->removeSeries(QStringLiteral("phase2"));
     showLimitOverlays();
 
+    // With a campaign test selected, a run is that test's measurement,
+    // whichever button started it.
+    const auto* test = m_campaignDock->activeTest();
+    if (campaignRun == CampaignRun::None && test != nullptr && !m_campaignDock->isLocked()) {
+        campaignRun = CampaignRun::Test;
+    }
+    m_campaignRun = test != nullptr ? campaignRun : CampaignRun::None;
+    m_runFirstTrace = m_session.traces.size();
+
     m_controller->setConfiguration(m_session.config);
     m_controller->setSessionMeta(m_session.meta);
     m_controller->start();
-    log(tr("Run started."));
+    switch (m_campaignRun) {
+        case CampaignRun::Test:
+            log(tr("Run started for test '%1'.").arg(QString::fromStdString(test->name)));
+            break;
+        case CampaignRun::Ambient:
+            log(tr("Ambient scan started for test '%1'; switch the equipment under test off.")
+                    .arg(QString::fromStdString(test->name)));
+            break;
+        case CampaignRun::None:
+            log(tr("Run started."));
+            break;
+    }
+}
+
+void MainWindow::runCampaignTest()
+{
+    if (m_campaignDock->activeTest() == nullptr) {
+        return;
+    }
+    m_campaignRun = CampaignRun::Test;
+    startRun();
+}
+
+void MainWindow::runAmbientScan()
+{
+    const auto* test = m_campaignDock->activeTest();
+    if (test == nullptr) {
+        return;
+    }
+    if (QMessageBox::question(this,
+                              tr("Ambient scan"),
+                              tr("Switch the equipment under test off, then start the ambient "
+                                 "scan for '%1'.")
+                                  .arg(QString::fromStdString(test->name)),
+                              QMessageBox::Ok | QMessageBox::Cancel) != QMessageBox::Ok)
+    {
+        return;
+    }
+    // The test's own settings, Phase 1 only: with no peak inside the margin
+    // threshold, nothing is flagged and Phase 2 does not run.
+    auto config = m_configDock->configuration();
+    config.peaks.marginThresholdDb = -1000.0;
+    m_runOverride = config;
+    m_campaignRun = CampaignRun::Ambient;
+    startRun();
+}
+
+void MainWindow::onTestSelected(const CampaignTest& test)
+{
+    if (m_controller->isRunning()) {
+        return;
+    }
+    m_loadingTest = true;
+    m_configDock->setConfiguration(test.config);
+    m_loadingTest = false;
+    m_session.config = m_configDock->configuration();
+    m_controller->setConfiguration(m_session.config);
+
+    m_peaks.clear();
+    m_selectedFrequency = Hertz{0};
+    m_plot->setMarkers({});
+    showTest(*m_plot, test);
+    m_resultsDock->setPoints(test.session ? test.session->results
+                                          : std::vector<MeasurementPoint>{});
+}
+
+void MainWindow::exportCampaignReport()
+{
+    const auto* campaign = m_campaignDock->campaign();
+    if (campaign == nullptr) {
+        log(tr("No campaign is open."));
+        return;
+    }
+    const auto path = QFileDialog::getSaveFileName(this,
+                                                   tr("Generate campaign report"),
+                                                   QStringLiteral("campaign-report.pdf"),
+                                                   tr("PDF documents (*.pdf)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    reporting::CampaignReportRenderer renderer;
+    renderer.setSpectrumRenderer(&renderTestSpectrum);
+    if (auto status = renderer.render(*campaign, m_reportTemplate, path); !status) {
+        QMessageBox::warning(
+            this, tr("Report failed"), QString::fromStdString(status.error().message()));
+        return;
+    }
+    log(tr("Campaign report written to %1").arg(path));
 }
 
 void MainWindow::togglePause()
@@ -1017,7 +1158,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         }
         m_controller->abort();
     }
-    if (!confirmDiscardChanges()) {
+    if (!confirmDiscardChanges() || !m_campaignDock->confirmDiscard()) {
         event->ignore();
         return;
     }

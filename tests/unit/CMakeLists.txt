@@ -38,6 +38,10 @@ peakemi_add_test(drivers
     SOURCES DriversTest.cpp
     LIBS    peakemi::drivers)
 
+peakemi_add_test(campaign
+    SOURCES CampaignTest.cpp
+    LIBS    peakemi::reporting)
+
 peakemi_add_test(plugins
     SOURCES PluginTest.cpp
     LIBS    peakemi::python)

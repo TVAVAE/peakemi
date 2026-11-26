@@ -1,7 +1,23 @@
-# Test campaigns: design (work in progress)
+# Test campaigns
 
 Lab-style test workflow: a campaign is an ordered test plan for one EUT, with a verdict,
-comments and sign-off per test, and one campaign report. Status: **designed, not built.**
+comments and sign-off per test, and one campaign report. Status: **built** (see "Using it").
+
+## Using it
+
+1. **Campaign ▸ New campaign** and pick a standard. The four tests are filled in and the
+   campaign details dialog opens for the equipment under test.
+2. Select a test in the **Test plan** tab. Its configuration is loaded into the run
+   configuration, and edits there belong to that test (add the LISN or antenna
+   corrections here).
+3. **Ambient scan** (EUT off) records a Phase 1 scan that is drawn in grey under the
+   measurement. **Run test**, or the toolbar's Start run, measures the test and files the
+   session under it.
+4. In the **Result** tab, the measured verdict can be overridden only with a reason;
+   add comments and sign as tester. **Equipment** and **Photos** hold the setup.
+5. **Campaign ▸ Sign-off and lock** records tester and reviewer; once every test has a
+   verdict the campaign can be locked as a closed record.
+6. **Report…** writes the campaign PDF. Campaigns are saved as `.peakemi-campaign.json`.
 
 ## Decisions (agreed 2026-11-25)
 

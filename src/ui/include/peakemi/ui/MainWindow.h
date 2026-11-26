@@ -9,12 +9,21 @@
 #include <QMainWindow>
 #include <QString>
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+
 class QAction;
 class QLabel;
 class QProgressBar;
 
+namespace peakemi {
+struct CampaignTest;
+}
+
 namespace peakemi::ui {
 
+class CampaignDock;
 class InstrumentDock;
 class LogDock;
 class PainterPlotBackend;
@@ -75,6 +84,11 @@ private slots:
 
     void showAboutDialog();
 
+    void onTestSelected(const peakemi::CampaignTest& test);
+    void runCampaignTest();
+    void runAmbientScan();
+    void exportCampaignReport();
+
 private:
     void createActions();
     void createMenus();
@@ -126,6 +140,24 @@ private:
     QLabel* m_cursorStatus{nullptr};
     QLabel* m_phaseStatus{nullptr};
     QProgressBar* m_progress{nullptr};
+
+    CampaignDock* m_campaignDock{nullptr};
+    /// What the run in progress was started for, when it is a campaign's.
+    enum class CampaignRun : std::uint8_t
+    {
+        None,
+        Test,
+        Ambient
+    };
+    CampaignRun m_campaignRun{CampaignRun::None};
+    /// Used instead of the run configuration dock for the next run: the
+    /// ambient scan measures the test's configuration without Phase 2.
+    std::optional<RunConfiguration> m_runOverride;
+    /// The first of m_session.traces that belongs to the run in progress.
+    std::size_t m_runFirstTrace{0};
+    /// Set while a campaign test's configuration is loaded into the dock, so
+    /// loading it is not taken for an edit of it.
+    bool m_loadingTest{false};
 
     std::vector<PeakCandidate> m_peaks;
     Hertz m_selectedFrequency{0};
