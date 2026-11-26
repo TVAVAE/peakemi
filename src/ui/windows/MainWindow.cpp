@@ -25,6 +25,7 @@
 #include <peakemi/ui/RunConfigDock.h>
 #include <peakemi/ui/RunController.h>
 #include <peakemi/ui/SessionPlot.h>
+#include <peakemi/ui/SetupLibraryDialog.h>
 #include <peakemi/ui/Theme.h>
 
 #include <QApplication>
@@ -297,6 +298,8 @@ void MainWindow::createMenus()
     runMenu->addSeparator();
     runMenu->addAction(m_disconnectAction);
     runMenu->addSeparator();
+    m_setupsAction = runMenu->addAction(tr("Test &set-ups…"), this, &MainWindow::openSetupLibrary);
+    m_setupsAction->setObjectName(QStringLiteral("actionTestSetups"));
     runMenu->addAction(m_pluginManagerAction);
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
@@ -426,6 +429,12 @@ void MainWindow::createDocks()
     connect(
         m_campaignDock, &CampaignDock::reportRequested, this, &MainWindow::exportCampaignReport);
     connect(m_campaignDock, &CampaignDock::statusMessage, this, &MainWindow::log);
+    connect(
+        m_campaignDock, &CampaignDock::setupLibraryRequested, this, &MainWindow::openSetupLibrary);
+    connect(m_campaignDock,
+            &CampaignDock::saveAsSetupRequested,
+            this,
+            [this](const TestSetup& setup) { showSetupLibrary(setup); });
     QAction* helpMenu = nullptr;
     for (auto* action : menuBar()->actions()) {
         if (action->menu() != nullptr && action->text() == tr("&Help")) {
@@ -919,6 +928,52 @@ void MainWindow::exportCampaignReport()
         return;
     }
     log(tr("Campaign report written to %1").arg(path));
+}
+
+void MainWindow::openSetupLibrary()
+{
+    showSetupLibrary(std::nullopt);
+}
+
+void MainWindow::showSetupLibrary(const std::optional<TestSetup>& unsaved)
+{
+    SetupLibraryDialog dialog{this};
+    dialog.setReportTemplate(m_reportTemplate);
+    const auto* test = m_campaignDock->activeTest();
+    if (m_controller->isRunning()) {
+        dialog.setApplyTarget(QString{});
+    } else if (test != nullptr && !m_campaignDock->isLocked()) {
+        dialog.setApplyTarget(tr("test '%1'").arg(QString::fromStdString(test->name)));
+    } else {
+        dialog.setApplyTarget(tr("run configuration"));
+    }
+    connect(&dialog, &SetupLibraryDialog::applyRequested, this, &MainWindow::applySetupFromLibrary);
+    if (unsaved) {
+        dialog.addUnsavedSetup(*unsaved);
+    }
+    dialog.exec();
+}
+
+void MainWindow::applySetupFromLibrary(const TestSetup& setup)
+{
+    if (m_campaignDock->activeTest() != nullptr && !m_campaignDock->isLocked()) {
+        m_campaignDock->applySetup(setup);
+        return;
+    }
+    // No campaign test: the set-up's corrections go into the run configuration,
+    // and its name into the session's test set-up field, which the report prints.
+    auto config = m_configDock->configuration();
+    config.corrections = setup.corrections();
+    m_configDock->setConfiguration(config);
+    m_session.config = m_configDock->configuration();
+    m_controller->setConfiguration(m_session.config);
+    m_session.meta.testSetup = setup.name;
+    m_dirty = true;
+    updateWindowTitle();
+    log(tr("Set-up '%1' applied to the run configuration: %n correction(s).",
+           nullptr,
+           static_cast<int>(setup.corrections().size()))
+            .arg(QString::fromStdString(setup.name)));
 }
 
 void MainWindow::togglePause()

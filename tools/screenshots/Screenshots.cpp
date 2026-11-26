@@ -14,8 +14,10 @@
 #include <peakemi/core/LimitCatalogue.h>
 #include <peakemi/core/MeasurementEngine.h>
 #include <peakemi/core/RunConfiguration.h>
+#include <peakemi/core/SetupLibrary.h>
 #include <peakemi/drivers/SimulatedDriver.h>
 #include <peakemi/reporting/CampaignReportRenderer.h>
+#include <peakemi/reporting/SetupSheetRenderer.h>
 #include <peakemi/ui/AboutDialog.h>
 #include <peakemi/ui/CampaignDock.h>
 #include <peakemi/ui/CampaignPlot.h>
@@ -25,12 +27,14 @@
 #include <peakemi/ui/PainterPlotBackend.h>
 #include <peakemi/ui/ResultsDock.h>
 #include <peakemi/ui/RunConfigDock.h>
+#include <peakemi/ui/SetupLibraryDialog.h>
 #include <peakemi/ui/Theme.h>
 
 #include <QAction>
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QPalette>
@@ -39,8 +43,10 @@
 #include <QStringList>
 #include <QStyleHints>
 #include <QTabBar>
+#include <QTemporaryDir>
 #include <QTextStream>
 
+#include <algorithm>
 #include <exception>
 #include <functional>
 
@@ -273,6 +279,62 @@ try {
         {.role = "RF cable", .model = "RG-223, 5 m", .serial = "C-17", .calibrationDue = ""}};
     horizontal.testedBy =
         peakemi::Signoff{.name = "A. Tester", .at = std::chrono::system_clock::now()};
+
+    // The bench the horizontal test was measured on, as a saved set-up: the
+    // equipment above with the run's own antenna factor and cable loss.
+    auto radiatedBench = peakemi::setupFrom("Radiated, 3 m bench",
+                                            peakemi::TestKind::Radiated,
+                                            horizontal.equipment,
+                                            horizontal.session->config.corrections);
+    radiatedBench.description = "Turntable 0.8 m above the ground plane, antenna mast at 3 m. "
+                                "Cable routed under the floor channel.";
+    radiatedBench.devices.back().notes = "Front input, VXI-11 on 192.168.1.20";
+    std::rotate(radiatedBench.devices.begin(),
+                radiatedBench.devices.begin() + 1,
+                radiatedBench.devices.end()); // analyzer last: EUT to analyzer
+    peakemi::applySetup(horizontal, radiatedBench);
+    horizontal.config.corrections = horizontal.session->config.corrections;
+
+    auto conductedBench =
+        peakemi::TestSetup::createNew("Conducted bench, 50 uH LISN", peakemi::TestKind::Conducted);
+    conductedBench.description = "EUT 0.4 m from the vertical reference plane, LISN bonded to "
+                                 "the ground plane, 10 dB limiter on the analyzer input.";
+    conductedBench.devices = {
+        {.equipment = {.role = "LISN",
+                       .model = "NNLK 8121",
+                       .serial = "L-0007",
+                       .calibrationDue = "2027-01-31"},
+         .correction =
+             peakemi::flatCorrection("NNLK 8121", peakemi::CorrectionKind::LisnFactor, 0.3),
+         .notes = "Line selected by the start commands"},
+        {.equipment = {.role = "Transient limiter",
+                       .model = "TBFL1",
+                       .serial = "T-0002",
+                       .calibrationDue = "2026-06-30"},
+         .correction = peakemi::flatCorrection("TBFL1", peakemi::CorrectionKind::Attenuator, 10.0),
+         .notes = ""},
+        {.equipment =
+             {.role = "RF cable", .model = "RG-58, 2 m", .serial = "C-03", .calibrationDue = ""},
+         .correction =
+             peakemi::flatCorrection("RG-58 2 m", peakemi::CorrectionKind::CableLoss, 0.2),
+         .notes = ""},
+        {.equipment = {.role = "Spectrum analyzer",
+                       .model = "R&S FSL6",
+                       .serial = "100005",
+                       .calibrationDue = "2027-03-01"},
+         .correction = std::nullopt,
+         .notes = ""}};
+
+    // The library lives in a throwaway folder, so the screenshot never shows
+    // or touches the developer's own set-ups.
+    QTemporaryDir setupFolder;
+    QSettings{}.setValue(QStringLiteral("setups/directory"), setupFolder.path());
+    const peakemi::SetupLibrary library{setupFolder.path()};
+    if (!setupFolder.isValid() || !library.save(radiatedBench) || !library.save(conductedBench)) {
+        out() << "cannot write the demo set-ups" << Qt::endl;
+        return 1;
+    }
+
     campaignDock->setCampaign(std::move(*campaign));
     campaignDock->selectTest(2);
     campaignDock->raise();
@@ -283,6 +345,24 @@ try {
     ok = save(campaignDock->grab(),
               directory + QStringLiteral("/test-plan") + suffix + QStringLiteral(".png")) &&
          ok;
+
+    {
+        peakemi::ui::SetupLibraryDialog setups{&window};
+        setups.setApplyTarget(QStringLiteral("test 'Radiated emissions – horizontal'"));
+        setups.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        ok = save(setups.grab(),
+                  directory + QStringLiteral("/test-setups") + suffix + QStringLiteral(".png")) &&
+             ok;
+    }
+    if (!reportPath.isEmpty()) {
+        const auto sheetPath =
+            QFileInfo{reportPath}.absolutePath() + QStringLiteral("/setup-sheet.pdf");
+        const peakemi::reporting::SetupSheetRenderer sheet;
+        if (sheet.render(conductedBench, peakemi::ReportTemplate{}, sheetPath)) {
+            out() << "wrote " << sheetPath << Qt::endl;
+        }
+    }
 
     if (!reportPath.isEmpty()) {
         peakemi::reporting::CampaignReportRenderer renderer;

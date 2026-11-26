@@ -101,6 +101,9 @@ struct CampaignTest
     std::vector<EquipmentItem> equipment;
     std::vector<SetupPhoto> photos;
     Signoff testedBy;
+    /// The saved set-up this test was built from, if any, as it read then.
+    std::string setupName;
+    std::string setupDescription;
 
     /// What the measurement says: NotTested without a session, or when no
     /// limit line covered what was measured.

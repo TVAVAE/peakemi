@@ -6,6 +6,7 @@ peakemi_add_module(ui
         dialogs/AboutDialog.cpp
         dialogs/PluginManagerDialog.cpp
         dialogs/ReportTemplateDialog.cpp
+        dialogs/SetupLibraryDialog.cpp
         docks/CampaignDock.cpp
         docks/InstrumentDock.cpp
         docks/LogDock.cpp
@@ -34,6 +35,7 @@ peakemi_add_module(ui
         include/peakemi/ui/RunConfigDock.h
         include/peakemi/ui/RunController.h
         include/peakemi/ui/SessionPlot.h
+        include/peakemi/ui/SetupLibraryDialog.h
         include/peakemi/ui/Theme.h
     PUBLIC
         peakemi::core

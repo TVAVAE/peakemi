@@ -2,6 +2,7 @@
 #include <peakemi/core/Logging.h>
 #include <peakemi/core/Time.h>
 #include <peakemi/reporting/CampaignReportRenderer.h>
+#include <peakemi/reporting/SetupSheetRenderer.h>
 
 #include <QByteArray>
 #include <QFileInfo>
@@ -177,10 +178,14 @@ testSection(const CampaignTest& test, std::size_t index, bool hasSpectrum, TimeP
                              qs(instrument.displayName()).toHtmlEscaped());
         }
     }
+    html += keyValue(QStringLiteral("Set-up"), orDash(test.setupName));
     html += QStringLiteral("</table>");
 
     if (!test.procedure.empty()) {
         html += QStringLiteral("<h3>Method</h3><p>%1</p>").arg(escaped(test.procedure));
+    }
+    if (!test.setupDescription.empty()) {
+        html += QStringLiteral("<h3>Set-up</h3><p>%1</p>").arg(escaped(test.setupDescription));
     }
 
     html += QStringLiteral("<h3>Spectrum</h3>");
@@ -251,6 +256,25 @@ testSection(const CampaignTest& test, std::size_t index, bool hasSpectrum, TimeP
             }
             html += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
                         .arg(orDash(item.role), orDash(item.model), orDash(item.serial), due);
+        }
+        html += QStringLiteral("</table>");
+    }
+
+    // The corrections the measurement was made with, or will be.
+    const auto& corrections =
+        test.session ? test.session->config.corrections : test.config.corrections;
+    html += QStringLiteral("<h3>Corrections</h3>");
+    if (corrections.empty()) {
+        html += QStringLiteral("<p>None: levels are as the analyzer read them.</p>");
+    } else {
+        html += QStringLiteral(
+            R"(<table border="1" cellspacing="0" cellpadding="3" width="100%"><tr style="background-color:#F1F3F4;"><th>Correction</th><th>Type</th><th>Value</th><th>Applied</th></tr>)");
+        for (const auto& table : corrections) {
+            html += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td></tr>")
+                        .arg(orDash(table.name),
+                             correctionKindName(table.kind),
+                             describeCorrection(table),
+                             table.enabled ? QStringLiteral("yes") : QStringLiteral("no"));
         }
         html += QStringLiteral("</table>");
     }
