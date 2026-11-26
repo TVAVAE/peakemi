@@ -1,6 +1,7 @@
 #pragma once
 
 #include <peakemi/core/Campaign.h>
+#include <peakemi/core/TestSetup.h>
 
 #include <QDockWidget>
 #include <QString>
@@ -60,6 +61,8 @@ public:
     void attachSession(const Session& session);
     /// File an ambient (EUT off) scan under the active test.
     void attachAmbient(const Trace& trace);
+    /// Fill the active test's equipment and corrections from a saved set-up.
+    void applySetup(const TestSetup& setup);
 
     /// Whether an instrument is connected and whether a run is in progress:
     /// run buttons and the test selection follow.
@@ -86,6 +89,10 @@ signals:
     void ambientRequested();
     void reportRequested();
     void statusMessage(const QString& message);
+    /// Open the set-up library to apply a set-up to the active test.
+    void setupLibraryRequested();
+    /// Offer @p setup, made from the active test, to the set-up library.
+    void saveAsSetupRequested(const peakemi::TestSetup& setup);
 
 private:
     void buildMenu();
@@ -154,6 +161,9 @@ private:
     QPushButton* m_addEquipment{nullptr};
     QPushButton* m_removeEquipment{nullptr};
     QPushButton* m_copyEquipment{nullptr};
+    QLabel* m_setupLabel{nullptr};
+    QPushButton* m_applySetup{nullptr};
+    QPushButton* m_saveSetup{nullptr};
 
     // Photos tab.
     QListWidget* m_photos{nullptr};

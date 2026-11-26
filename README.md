@@ -132,6 +132,12 @@ QT_QPA_PLATFORM=offscreen ./build/debug/bin/peakemi_screenshots docs/images --da
   comments, equipment with calibration due dates, setup photos and a signature; the
   campaign is signed off by tester and reviewer, can be locked, and produces one PDF
   report. See [docs/campaigns-design.md](docs/campaigns-design.md).
+* **Test set-ups**: a bench documented as its signal chain, from the equipment under test
+  to the analyzer: every device's model, serial number, calibration due date, notes and
+  correction (a fixed value or an imported table). Set-ups are saved in a library folder that
+  can be shared, printed as a one-page sheet, and applied to a campaign test or to the run
+  configuration, which fills in the equipment and the corrections together. See
+  [docs/test-setups.md](docs/test-setups.md).
 * **Headless runs for CI**: `peakemi-cli` performs the same measurement from a build
   script, with no display and no window system, and reports the verdict as its exit code —
   0 within the limits, 1 outside them. It writes the session, the CSV and JSON result

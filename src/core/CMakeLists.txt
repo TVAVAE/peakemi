@@ -25,6 +25,8 @@ peakemi_add_module(core
         session/JsonConversions.cpp
         session/Session.cpp
         session/SessionSerializer.cpp
+        setup/SetupLibrary.cpp
+        setup/TestSetup.cpp
         util/AtomicFileWriter.cpp
         util/Error.cpp
         util/Logging.cpp
@@ -56,8 +58,10 @@ peakemi_add_module(core
         include/peakemi/core/RunConfiguration.h
         include/peakemi/core/Session.h
         include/peakemi/core/SessionSerializer.h
+        include/peakemi/core/SetupLibrary.h
         include/peakemi/core/SweepParams.h
         include/peakemi/core/Time.h
+        include/peakemi/core/TestSetup.h
         include/peakemi/core/Trace.h
         include/peakemi/core/Units.h
     PUBLIC

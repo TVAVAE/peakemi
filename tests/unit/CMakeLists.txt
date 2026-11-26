@@ -42,6 +42,10 @@ peakemi_add_test(campaign
     SOURCES CampaignTest.cpp
     LIBS    peakemi::reporting)
 
+peakemi_add_test(setup
+    SOURCES SetupTest.cpp
+    LIBS    peakemi::reporting)
+
 peakemi_add_test(plugins
     SOURCES PluginTest.cpp
     LIBS    peakemi::python)

@@ -95,7 +95,9 @@ constexpr const char* SchemaName = "peakemi.campaign";
               {"comments", test.comments},
               {"equipment", std::move(equipment)},
               {"photos", std::move(photos)},
-              {"tested_by", toJson(test.testedBy)}};
+              {"tested_by", toJson(test.testedBy)},
+              {"setup_name", test.setupName},
+              {"setup_description", test.setupDescription}};
     // The session in the session format, so it can be taken out as one.
     json["session"] =
         test.session ? Json::parse(SessionSerializer::toJson(*test.session, false)) : Json(nullptr);
@@ -119,6 +121,8 @@ constexpr const char* SchemaName = "peakemi.campaign";
     test.port = text(json, "port");
     test.procedure = text(json, "procedure");
     test.comments = text(json, "comments");
+    test.setupName = text(json, "setup_name");
+    test.setupDescription = text(json, "setup_description");
     if (test.id.empty()) {
         test.id = newIdentifier();
     }

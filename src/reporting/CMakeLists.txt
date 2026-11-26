@@ -4,12 +4,14 @@ peakemi_add_module(reporting
         writers/CsvExporter.cpp
         writers/JsonExporter.cpp
         writers/ReportTemplateIo.cpp
+        writers/SetupSheetRenderer.cpp
         writers/PdfReportRenderer.cpp
     HEADERS
         include/peakemi/reporting/CampaignReportRenderer.h
         include/peakemi/reporting/CsvExporter.h
         include/peakemi/reporting/JsonExporter.h
         include/peakemi/reporting/ReportTemplateIo.h
+        include/peakemi/reporting/SetupSheetRenderer.h
         include/peakemi/reporting/PdfReportRenderer.h
     PUBLIC
         peakemi::core

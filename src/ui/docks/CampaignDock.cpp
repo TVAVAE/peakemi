@@ -412,6 +412,32 @@ QWidget* CampaignDock::buildEquipmentTab()
 {
     auto* tab = new QWidget;
     auto* layout = new QVBoxLayout{tab};
+
+    auto* setupRow = new QHBoxLayout;
+    m_setupLabel = new QLabel{tab};
+    m_setupLabel->setTextFormat(Qt::RichText);
+    m_applySetup = new QPushButton{tr("Apply set-up…"), tab};
+    m_applySetup->setToolTip(tr("Fill this test's equipment and corrections from a saved "
+                                "set-up."));
+    m_saveSetup = new QPushButton{tr("Save as set-up…"), tab};
+    m_saveSetup->setToolTip(tr("Keep this test's equipment and corrections as a set-up for "
+                               "later tests and campaigns."));
+    setupRow->addWidget(m_setupLabel, 1);
+    setupRow->addWidget(m_applySetup);
+    setupRow->addWidget(m_saveSetup);
+    layout->addLayout(setupRow);
+    connect(m_applySetup, &QPushButton::clicked, this, &CampaignDock::setupLibraryRequested);
+    connect(m_saveSetup, &QPushButton::clicked, this, [this] {
+        const auto* test = activeTest();
+        if (test == nullptr) {
+            return;
+        }
+        const auto name = test->setupName.empty() ? test->name : test->setupName;
+        auto setup = setupFrom(name, test->kind, test->equipment, test->config.corrections);
+        setup.description = test->setupDescription;
+        emit saveAsSetupRequested(setup);
+    });
+
     m_equipment = new QTableWidget{0, EquipmentColumnCount, tab};
     m_equipment->setHorizontalHeaderLabels(
         {tr("Role"), tr("Model"), tr("Serial number"), tr("Calibration due (YYYY-MM-DD)")});
@@ -612,6 +638,35 @@ void CampaignDock::attachAmbient(const Trace& trace)
     markDirty();
     refreshTestRow(m_tests->currentRow());
     emit statusMessage(tr("Ambient scan filed under '%1'.").arg(qs(test->name)));
+    emit testSelected(*test);
+}
+
+void CampaignDock::applySetup(const TestSetup& setup)
+{
+    auto* test = mutableActiveTest();
+    if (test == nullptr) {
+        return;
+    }
+    if (setup.kind != TestKind::Other && test->kind != TestKind::Other &&
+        setup.kind != test->kind &&
+        QMessageBox::question(this,
+                              tr("Apply set-up"),
+                              tr("'%1' is a %2 set-up and '%3' a %4 test. Apply it anyway?")
+                                  .arg(qs(setup.name),
+                                       qs(testKindKey(setup.kind)),
+                                       qs(test->name),
+                                       qs(testKindKey(test->kind)))) != QMessageBox::Yes)
+    {
+        return;
+    }
+    peakemi::applySetup(*test, setup);
+    markDirty();
+    refreshTestRow(m_tests->currentRow());
+    refreshDetails();
+    emit statusMessage(tr("Set-up '%1' applied to '%2': %3 device(s), %4 correction(s).")
+                           .arg(qs(setup.name), qs(test->name))
+                           .arg(setup.devices.size())
+                           .arg(setup.corrections().size()));
     emit testSelected(*test);
 }
 
@@ -1039,6 +1094,9 @@ void CampaignDock::refreshDetails()
 void CampaignDock::refreshEquipment()
 {
     const auto* test = activeTest();
+    m_setupLabel->setText(test != nullptr && !test->setupName.empty()
+                              ? tr("Set-up: <b>%1</b>").arg(qs(test->setupName).toHtmlEscaped())
+                              : tr("No saved set-up applied"));
     m_updating = true;
     const int rows = test != nullptr ? static_cast<int>(test->equipment.size()) : 0;
     m_equipment->setRowCount(rows);
@@ -1111,6 +1169,8 @@ void CampaignDock::updateEnabledState()
     m_addEquipment->setEnabled(canEdit);
     m_removeEquipment->setEnabled(canEdit && m_equipment->currentRow() >= 0);
     m_copyEquipment->setEnabled(canEdit);
+    m_applySetup->setEnabled(canEdit);
+    m_saveSetup->setEnabled(open && selected && !m_running);
     m_addPhotos->setEnabled(canEdit);
     m_removePhoto->setEnabled(canEdit && m_photos->currentRow() >= 0);
     m_caption->setReadOnly(!canEdit);

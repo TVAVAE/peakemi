@@ -17,9 +17,7 @@ class QAction;
 class QLabel;
 class QProgressBar;
 
-namespace peakemi {
-struct CampaignTest;
-}
+#include <peakemi/core/TestSetup.h>
 
 namespace peakemi::ui {
 
@@ -88,6 +86,7 @@ private slots:
     void runCampaignTest();
     void runAmbientScan();
     void exportCampaignReport();
+    void openSetupLibrary();
 
 private:
     void createActions();
@@ -102,6 +101,10 @@ private:
     void updateWindowTitle();
     void showLimitOverlays();
     void refreshMarkers();
+    /// The set-up library, with @p unsaved added for editing when given.
+    void showSetupLibrary(const std::optional<TestSetup>& unsaved);
+    /// To the selected campaign test, or else to the run configuration.
+    void applySetupFromLibrary(const TestSetup& setup);
     void log(const QString& message);
     [[nodiscard]] bool confirmDiscardChanges();
     [[nodiscard]] QString autosavePathFor(const QString& runId) const;
@@ -135,6 +138,7 @@ private:
     QAction* m_pluginManagerAction{nullptr};
     QAction* m_aboutAction{nullptr};
     QAction* m_aboutQtAction{nullptr};
+    QAction* m_setupsAction{nullptr};
 
     QLabel* m_instrumentStatus{nullptr};
     QLabel* m_cursorStatus{nullptr};
