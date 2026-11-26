@@ -23,14 +23,7 @@ void showTest(IPlotBackend& plot, const CampaignTest& test)
     const auto& config = test.session ? test.session->config : test.config;
 
     for (const auto& limit : config.limits) {
-        PlotSeries series;
-        series.id = QStringLiteral("limit:%1").arg(qs(limit.name));
-        series.label = qs(limit.name);
-        series.colour = limitColour();
-        series.role = PlotRole::Limit;
-        series.width = 1.6;
-        series.points = limitPoints(limit, config.span);
-        plot.setSeries(series);
+        plot.setSeries(limitSeries(limit, config.span, config.marginalThresholdDb));
     }
 
     AmplitudeUnit unit = config.limits.empty() ? AmplitudeUnit::dBuV : config.limits.front().unit;
@@ -73,8 +66,13 @@ void showTest(IPlotBackend& plot, const CampaignTest& test)
             verified.points.append(
                 QPointF{static_cast<double>(point.frequency.value()), point.correctedAmplitude});
         }
+        verified.pointRoles = verdictRoles(test.session->results);
         plot.setSeries(verified);
     }
+    plot.setVerdict(
+        test.session
+            ? plotVerdict(test.session->results, config.limits, !test.session->traces.empty())
+            : PlotVerdict{});
 
     plot.setAmplitudeLabel(qs(amplitudeUnitKey(unit)));
     plot.setFrequencyRange(config.span);
@@ -85,8 +83,10 @@ QImage renderTestSpectrum(const CampaignTest& test, QSize size)
 {
     PainterPlotBackend plot;
     plot.resize(size);
-    // The report is printed on white paper, whatever the screen looked like.
+    // The report is printed on white paper, whatever the screen looked like,
+    // over the logarithmic frequency axis EMI plots are read on.
     plot.setDisplayScheme(Scheme::Light);
+    plot.setLogarithmicFrequency(true);
     showTest(plot, test);
     return plot.renderToImage(size);
 }
