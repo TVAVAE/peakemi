@@ -485,7 +485,8 @@ void MainWindow::restoreLayout()
     restoreGeometry(settings.value(QStringLiteral("mainWindow/geometry")).toByteArray());
     restoreState(settings.value(QStringLiteral("mainWindow/state")).toByteArray());
     m_logFrequencyAction->setChecked(
-        settings.value(QStringLiteral("plot/logarithmicFrequency"), false).toBool());
+        // Logarithmic unless chosen otherwise: it is how EMI spectra are read.
+        settings.value(QStringLiteral("plot/logarithmicFrequency"), true).toBool());
 }
 
 void MainWindow::saveLayout()
@@ -538,14 +539,8 @@ void MainWindow::updateWindowTitle()
 void MainWindow::showLimitOverlays()
 {
     for (const auto& limit : m_session.config.limits) {
-        PlotSeries series;
-        series.id = QStringLiteral("limit:%1").arg(QString::fromStdString(limit.name));
-        series.label = QString::fromStdString(limit.name);
-        series.colour = limitColour();
-        series.role = PlotRole::Limit;
-        series.width = 1.6;
-        series.points = limitPoints(limit, m_session.config.span);
-        m_plot->setSeries(series);
+        m_plot->setSeries(
+            limitSeries(limit, m_session.config.span, m_session.config.marginalThresholdDb));
     }
     m_plot->setAmplitudeLabel(m_session.config.limits.empty()
                                   ? qs(amplitudeUnitKey(AmplitudeUnit::dBuV))
@@ -736,11 +731,15 @@ void MainWindow::onPointMeasured(const MeasurementPoint& point)
     verified.colour = verifiedPointColour();
     verified.role = PlotRole::Verified;
     verified.style = PlotStyle::Points;
-    for (const auto& stored : m_resultsDock->points()) {
+    const auto& points = m_resultsDock->points();
+    for (const auto& stored : points) {
         verified.points.append(
             QPointF{static_cast<double>(stored.frequency.value()), stored.correctedAmplitude});
     }
+    verified.pointRoles = verdictRoles(points);
     m_plot->setSeries(verified);
+    // The verdict as it stands so far, updated with every verified point.
+    m_plot->setVerdict(plotVerdict(points, m_session.config.limits, true));
 
     m_dirty = true;
     updateActionStates();
@@ -776,6 +775,8 @@ void MainWindow::onRunFinished(const Session& session)
     m_session.results = session.results;
     m_session.meta = session.meta;
     m_resultsDock->setPoints(session.results);
+    m_plot->setVerdict(
+        plotVerdict(session.results, m_session.config.limits, !m_session.traces.empty()));
     m_dirty = true;
     updateActionStates();
     updateWindowTitle();
@@ -826,6 +827,7 @@ void MainWindow::startRun()
     m_selectedFrequency = Hertz{0};
     m_plot->setMarkers({});
     m_plot->removeSeries(QStringLiteral("phase2"));
+    m_plot->setVerdict(PlotVerdict{});
     showLimitOverlays();
 
     // With a campaign test selected, a run is that test's measurement,
@@ -1016,6 +1018,7 @@ void MainWindow::newSession()
     m_dirty = false;
     m_resultsDock->clear();
     m_plot->clearSeries();
+    m_plot->setVerdict(PlotVerdict{});
     showLimitOverlays();
     updatePlotSettings();
     updateActionStates();
@@ -1050,6 +1053,8 @@ void MainWindow::openSessionFile(const QString& path)
     m_configDock->setConfiguration(m_session.config);
     m_resultsDock->setPoints(m_session.results);
     m_plot->clearSeries();
+    m_plot->setVerdict(
+        plotVerdict(m_session.results, m_session.config.limits, !m_session.traces.empty()));
     showLimitOverlays();
     if (!m_session.traces.empty()) {
         const auto& trace = m_session.traces.back();

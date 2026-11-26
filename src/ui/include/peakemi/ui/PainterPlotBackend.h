@@ -42,6 +42,7 @@ public:
 
     void setMarkers(const QVector<PlotMarker>& markers) override;
     void setSettingsSummary(const QStringList& items) override;
+    void setVerdict(const PlotVerdict& verdict) override;
 
     /// Draw the display in @p scheme rather than in the interface's current
     /// one. The report sets Light: it is printed on white paper whatever the
@@ -96,6 +97,9 @@ private:
     void drawSettingsBar(QPainter& painter, QSize size) const;
     void drawGrid(QPainter& painter, const Layout& layout) const;
     void drawFooter(QPainter& painter, const Layout& layout) const;
+    void drawBands(QPainter& painter, const Layout& layout) const;
+    void drawVerdict(QPainter& painter, const Layout& layout) const;
+    [[nodiscard]] QColor outcomeColour(PlotOutcome outcome) const;
     void drawSeries(QPainter& painter, const Layout& layout, const PlotSeries& series) const;
     void drawMarkers(QPainter& painter, const Layout& layout) const;
     void drawLegend(QPainter& painter, const Layout& layout) const;
@@ -106,6 +110,7 @@ private:
     std::vector<PlotSeries> m_series;
     QVector<PlotMarker> m_markers;
     QStringList m_settings;
+    PlotVerdict m_verdict;
     std::optional<Scheme> m_scheme;
     QString m_amplitudeLabel{QStringLiteral("dBuV")};
 

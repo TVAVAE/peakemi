@@ -122,19 +122,87 @@ QVector<QPointF> limitPoints(const LimitLine& limit, FrequencyRange span)
     return points;
 }
 
+PlotRole limitRole(const LimitLine& limit)
+{
+    return limit.detector == Detector::Average ? PlotRole::LimitAverage : PlotRole::Limit;
+}
+
+PlotSeries limitSeries(const LimitLine& limit, FrequencyRange span, double marginDb)
+{
+    PlotSeries series;
+    series.id = QStringLiteral("limit:%1").arg(QString::fromStdString(limit.name));
+    series.label = QString::fromStdString(limit.name);
+    series.colour = limitColour();
+    series.role = limitRole(limit);
+    series.width = 1.6;
+    series.marginBandDb = std::max(0.0, marginDb);
+    series.points = limitPoints(limit, span);
+    return series;
+}
+
+QVector<PlotRole> verdictRoles(const std::vector<MeasurementPoint>& results)
+{
+    QVector<PlotRole> roles;
+    roles.reserve(static_cast<qsizetype>(results.size()));
+    for (const auto& point : results) {
+        switch (point.verdict) {
+            case Verdict::Fail:
+                roles.append(PlotRole::MarkerFail);
+                break;
+            case Verdict::Marginal:
+                roles.append(PlotRole::MarkerMarginal);
+                break;
+            case Verdict::Pass:
+            case Verdict::Unknown:
+                roles.append(PlotRole::Verified);
+                break;
+        }
+    }
+    return roles;
+}
+
+PlotVerdict plotVerdict(const std::vector<MeasurementPoint>& results,
+                        const std::vector<LimitLine>& limits,
+                        bool scanned)
+{
+    PlotVerdict verdict;
+    if (!scanned || limits.empty()) {
+        return verdict;
+    }
+    const auto rank = [](PlotOutcome outcome) { return static_cast<int>(outcome); };
+    verdict.outcome = PlotOutcome::Pass;
+    for (const auto& limit : limits) {
+        PlotOutcome outcome = PlotOutcome::Pass;
+        for (const auto& point : results) {
+            if (point.limitName != limit.name) {
+                continue;
+            }
+            const auto pointOutcome = point.verdict == Verdict::Fail       ? PlotOutcome::Fail
+                                      : point.verdict == Verdict::Marginal ? PlotOutcome::Marginal
+                                                                           : PlotOutcome::Pass;
+            if (rank(pointOutcome) > rank(outcome)) {
+                outcome = pointOutcome;
+            }
+        }
+        if (rank(outcome) > rank(verdict.outcome)) {
+            verdict.outcome = outcome;
+        }
+        const auto word = outcome == PlotOutcome::Fail       ? QObject::tr("Fail")
+                          : outcome == PlotOutcome::Marginal ? QObject::tr("Marginal")
+                                                             : QObject::tr("Pass");
+        verdict.lines.append(PlotVerdictLine{
+            .text = QStringLiteral("%1: %2").arg(QString::fromStdString(limit.name), word),
+            .outcome = outcome});
+    }
+    return verdict;
+}
+
 void showSession(IPlotBackend& plot, const Session& session)
 {
     plot.clearSeries();
 
     for (const auto& limit : session.config.limits) {
-        PlotSeries series;
-        series.id = QStringLiteral("limit:%1").arg(QString::fromStdString(limit.name));
-        series.label = QString::fromStdString(limit.name);
-        series.colour = limitColour();
-        series.role = PlotRole::Limit;
-        series.width = 1.6;
-        series.points = limitPoints(limit, session.config.span);
-        plot.setSeries(series);
+        plot.setSeries(limitSeries(limit, session.config.span, session.config.marginalThresholdDb));
     }
 
     AmplitudeUnit unit =
@@ -170,8 +238,10 @@ void showSession(IPlotBackend& plot, const Session& session)
             verified.points.append(
                 QPointF{static_cast<double>(point.frequency.value()), point.correctedAmplitude});
         }
+        verified.pointRoles = verdictRoles(session.results);
         plot.setSeries(verified);
     }
+    plot.setVerdict(plotVerdict(session.results, session.config.limits, !session.traces.empty()));
 
     plot.setFrequencyRange(session.config.span);
     plot.autoScale();
@@ -183,8 +253,10 @@ QImage renderSessionSpectrum(const Session& session, QSize size)
     // image, so nothing about this needs a window or a compositor.
     PainterPlotBackend plot;
     plot.resize(size);
-    // The report is printed on white paper, whatever the screen looked like.
+    // The report is printed on white paper, whatever the screen looked like,
+    // over the logarithmic frequency axis EMI plots are read on.
     plot.setDisplayScheme(Scheme::Light);
+    plot.setLogarithmicFrequency(true);
     showSession(plot, session);
     return plot.renderToImage(size);
 }

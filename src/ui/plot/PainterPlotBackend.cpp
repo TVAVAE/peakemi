@@ -1,3 +1,4 @@
+#include <peakemi/core/CisprBands.h>
 #include <peakemi/ui/PainterPlotBackend.h>
 
 #include <QFontMetricsF>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <numeric>
 
 namespace peakemi::ui {
 namespace {
@@ -184,11 +186,13 @@ void PainterPlotBackend::autoScale()
         return;
     }
 
-    const double headroom = std::max(2.0, (maximumAmplitude - minimumAmplitude) * 0.1);
+    // More room above than below: the verdict, the legend and the peak labels
+    // sit at the top of the display and should not cover the highest peaks.
+    const double range = maximumAmplitude - minimumAmplitude;
     m_frequencyStart = minimumFrequency;
     m_frequencyStop = std::max(maximumFrequency, minimumFrequency + MinimumSpanHz);
-    m_amplitudeMinimum = minimumAmplitude - headroom;
-    m_amplitudeMaximum = maximumAmplitude + headroom;
+    m_amplitudeMinimum = minimumAmplitude - std::max(2.0, range * 0.1);
+    m_amplitudeMaximum = maximumAmplitude + std::max(6.0, range * 0.4);
     emit viewChanged();
     update();
 }
@@ -205,10 +209,32 @@ void PainterPlotBackend::setSettingsSummary(const QStringList& items)
     update();
 }
 
+void PainterPlotBackend::setVerdict(const PlotVerdict& verdict)
+{
+    m_verdict = verdict;
+    update();
+}
+
 void PainterPlotBackend::setDisplayScheme(std::optional<Scheme> scheme)
 {
     m_scheme = scheme;
     update();
+}
+
+QColor PainterPlotBackend::outcomeColour(PlotOutcome outcome) const
+{
+    const auto display = colours();
+    switch (outcome) {
+        case PlotOutcome::Pass:
+            return display.verified;
+        case PlotOutcome::Marginal:
+            return display.markerMarginal;
+        case PlotOutcome::Fail:
+            return display.markerFail;
+        case PlotOutcome::None:
+            break;
+    }
+    return display.text;
 }
 
 DisplayColours PainterPlotBackend::colours() const
@@ -232,6 +258,8 @@ QColor PainterPlotBackend::colourFor(PlotRole role, const QColor& fallback) cons
             return display.markerFail;
         case PlotRole::MarkerMarginal:
             return display.markerMarginal;
+        case PlotRole::LimitAverage:
+            return display.limitAverage;
         case PlotRole::Custom:
             break;
     }
@@ -509,15 +537,41 @@ void PainterPlotBackend::drawSeries(QPainter& painter,
 
     painter.setClipRect(layout.plotArea);
     if (series.style == PlotStyle::Points) {
-        // A ring filled with the display colour, so it reads on top of the trace.
-        painter.setPen(QPen{colour, 1.8});
+        // A ring filled with the display colour, so it reads on top of the
+        // trace; coloured per point when each carries its own verdict.
+        const bool perPoint = series.pointRoles.size() == series.points.size();
         painter.setBrush(colours().background);
-        for (const auto& point : series.points) {
+        for (qsizetype i = 0; i < series.points.size(); ++i) {
+            const auto& point = series.points[i];
+            const QColor pointColour = perPoint ? colourFor(series.pointRoles[i], colour) : colour;
+            painter.setPen(QPen{pointColour, 1.8});
             const QPointF position{toX(layout, point.x()), toY(layout, point.y())};
             painter.drawEllipse(position, 3.5, 3.5);
         }
         painter.setBrush(Qt::NoBrush);
     } else {
+        if (series.marginBandDb > 0.0) {
+            // The marginal zone under a limit line, as analyzers shade it: a
+            // reading inside it passes, but not by much.
+            QPolygonF band;
+            QVector<QPointF> lower;
+            for (const auto& point : series.points) {
+                if (!std::isfinite(point.y())) {
+                    continue;
+                }
+                band << QPointF{toX(layout, point.x()), toY(layout, point.y())};
+                lower << QPointF{toX(layout, point.x()),
+                                 toY(layout, point.y() - series.marginBandDb)};
+            }
+            for (auto it = lower.crbegin(); it != lower.crend(); ++it) {
+                band << *it;
+            }
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(translucent(colour, 40));
+            painter.drawPolygon(band);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(pen);
+        }
         QPainterPath path;
         bool started = false;
         for (const auto& point : series.points) {
@@ -542,7 +596,32 @@ void PainterPlotBackend::drawMarkers(QPainter& painter, const Layout& layout) co
 {
     const auto display = colours();
     const QFontMetricsF metrics{painter.font()};
+
+    // The selected marker gets a line through the display, as an analyzer
+    // draws its measurement frequency, before anything is drawn over it.
     for (const auto& marker : m_markers) {
+        if (!marker.selected) {
+            continue;
+        }
+        const double x = toX(layout, marker.position.x());
+        if (x >= layout.plotArea.left() && x <= layout.plotArea.right()) {
+            painter.setPen(
+                QPen{translucent(colourFor(marker.role, marker.colour), 170), 1.0, Qt::DashLine});
+            painter.drawLine(QPointF{x, layout.plotArea.top()},
+                             QPointF{x, layout.plotArea.bottom()});
+        }
+    }
+
+    // Labels are placed left to right and lifted clear of the ones already
+    // placed, so close peaks do not print over each other.
+    std::vector<int> order(static_cast<std::size_t>(m_markers.size()));
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [this](int a, int b) {
+        return m_markers[a].position.x() < m_markers[b].position.x();
+    });
+    std::vector<QRectF> placed;
+    for (const int index : order) {
+        const auto& marker = m_markers[index];
         const QPointF position{toX(layout, marker.position.x()), toY(layout, marker.position.y())};
         if (!layout.plotArea.contains(position)) {
             continue;
@@ -553,23 +632,134 @@ void PainterPlotBackend::drawMarkers(QPainter& painter, const Layout& layout) co
         const QPolygonF flag{
             {position, position + QPointF{-5.0, -9.0}, position + QPointF{5.0, -9.0}}};
         painter.drawPolygon(flag);
-        if (!marker.label.isEmpty()) {
-            // A small boxed readout, so the label stays legible where it lands
-            // on the trace or on a neighbouring marker.
-            const double width = metrics.horizontalAdvance(marker.label);
-            const QPointF text = position + QPointF{-width / 2.0, -14.0};
-            const QRectF box{text.x() - 3.0,
-                             text.y() - metrics.ascent() - 1.0,
-                             width + 6.0,
-                             metrics.height() + 2.0};
-            painter.setPen(QPen{translucent(colour, 160), 1.0});
-            painter.setBrush(translucent(display.background, 215));
-            painter.drawRoundedRect(box, 3.0, 3.0);
-            painter.setPen(colour);
-            painter.drawText(text, marker.label);
+        if (marker.label.isEmpty()) {
+            continue;
         }
+        // A small boxed readout, so the label stays legible where it lands
+        // on the trace or on a neighbouring marker.
+        const double width = metrics.horizontalAdvance(marker.label);
+        QRectF box{position.x() - width / 2.0 - 3.0,
+                   position.y() - 14.0 - metrics.ascent() - 1.0,
+                   width + 6.0,
+                   metrics.height() + 2.0};
+        for (int lift = 0; lift < 6; ++lift) {
+            const bool clear =
+                std::none_of(placed.begin(), placed.end(), [&box](const QRectF& other) {
+                    return other.adjusted(-2.0, -1.0, 2.0, 1.0).intersects(box);
+                });
+            if (clear || box.top() - box.height() < layout.plotArea.top()) {
+                break;
+            }
+            box.translate(0.0, -(box.height() + 2.0));
+        }
+        if (box.bottom() < position.y() - 12.0) {
+            // Lifted: a leader line shows which flag the label belongs to.
+            painter.setPen(QPen{translucent(colour, 140), 1.0});
+            painter.drawLine(QPointF{position.x(), position.y() - 9.0},
+                             QPointF{position.x(), box.bottom()});
+        }
+        placed.push_back(box);
+        painter.setPen(QPen{translucent(colour, 160), 1.0});
+        painter.setBrush(translucent(display.background, 215));
+        painter.drawRoundedRect(box, 3.0, 3.0);
+        painter.setPen(colour);
+        painter.drawText(QPointF{box.left() + 3.0, box.top() + 1.0 + metrics.ascent()},
+                         marker.label);
     }
     painter.setBrush(Qt::NoBrush);
+}
+
+void PainterPlotBackend::drawBands(QPainter& painter, const Layout& layout) const
+{
+    // The CISPR 16-1-1 band edges inside the view, marked faintly with the
+    // band letter, so it is clear which RBW a stretch of the scan was made with.
+    const auto display = colours();
+    QFont font = painter.font();
+    font.setPointSizeF(font.pointSizeF() * 0.85);
+    painter.save();
+    painter.setFont(font);
+    const QFontMetricsF metrics{font};
+    for (const auto& band : cisprBands()) {
+        const double start =
+            std::max(static_cast<double>(band.range.start.value()), layout.frequencyStart);
+        const double stop =
+            std::min(static_cast<double>(band.range.stop.value()), layout.frequencyStop);
+        if (stop <= start) {
+            continue;
+        }
+        const double left = toX(layout, start);
+        const double right = toX(layout, stop);
+        if (start > layout.frequencyStart) {
+            painter.setPen(QPen{translucent(display.mutedText, 150), 1.0, Qt::DashDotLine});
+            painter.drawLine(QPointF{left, layout.plotArea.top()},
+                             QPointF{left, layout.plotArea.bottom()});
+        }
+        const auto key = cisprBandKey(band.band);
+        const auto label = QStringLiteral("Band %1").arg(
+            QString::fromUtf8(key.data(), static_cast<qsizetype>(key.size())));
+        if (right - left > metrics.horizontalAdvance(label) + 12.0) {
+            painter.setPen(translucent(display.mutedText, 200));
+            painter.drawText(QPointF{(left + right - metrics.horizontalAdvance(label)) / 2.0,
+                                     layout.plotArea.bottom() - 6.0},
+                             label);
+        }
+    }
+    painter.restore();
+}
+
+void PainterPlotBackend::drawVerdict(QPainter& painter, const Layout& layout) const
+{
+    if (m_verdict.outcome == PlotOutcome::None) {
+        return;
+    }
+    const auto display = colours();
+    QFont headlineFont = painter.font();
+    headlineFont.setBold(true);
+    headlineFont.setPointSizeF(headlineFont.pointSizeF() * 1.35);
+    const QFontMetricsF headlineMetrics{headlineFont};
+    const QFontMetricsF metrics{painter.font()};
+
+    QString headline;
+    switch (m_verdict.outcome) {
+        case PlotOutcome::Pass:
+            headline = tr("PASS");
+            break;
+        case PlotOutcome::Marginal:
+            headline = tr("MARGINAL");
+            break;
+        case PlotOutcome::Fail:
+            headline = tr("FAIL");
+            break;
+        case PlotOutcome::None:
+            break;
+    }
+    double width = headlineMetrics.horizontalAdvance(headline);
+    for (const auto& line : m_verdict.lines) {
+        width = std::max(width, metrics.horizontalAdvance(line.text));
+    }
+    const double lineHeight = metrics.height() + 2.0;
+    const QRectF box{layout.plotArea.left() + 8.0,
+                     layout.plotArea.top() + 8.0,
+                     width + 18.0,
+                     headlineMetrics.height() + 10.0 + m_verdict.lines.size() * lineHeight};
+    const QColor colour = outcomeColour(m_verdict.outcome);
+    painter.setPen(QPen{translucent(colour, 170), 1.0});
+    painter.setBrush(translucent(display.background, 225));
+    painter.drawRoundedRect(box, 4.0, 4.0);
+    painter.setBrush(Qt::NoBrush);
+
+    painter.save();
+    painter.setFont(headlineFont);
+    painter.setPen(colour);
+    painter.drawText(QPointF{box.left() + 9.0, box.top() + 5.0 + headlineMetrics.ascent()},
+                     headline);
+    painter.restore();
+    double y = box.top() + 6.0 + headlineMetrics.height();
+    for (const auto& line : m_verdict.lines) {
+        painter.setPen(outcomeColour(line.outcome));
+        painter.drawText(QPointF{box.left() + 9.0, y + metrics.ascent()}, line.text);
+        y += lineHeight;
+    }
 }
 
 void PainterPlotBackend::drawLegend(QPainter& painter, const Layout& layout) const
@@ -634,8 +824,9 @@ void PainterPlotBackend::drawCursor(QPainter& painter, const Layout& layout) con
                                 QString::number(fromY(layout, m_cursor->y()), 'f', 1),
                                 m_amplitudeLabel);
     const QFontMetricsF metrics{painter.font()};
+    // Bottom left, clear of the verdict and the legend along the top.
     const QRectF box{layout.plotArea.left() + 8.0,
-                     layout.plotArea.top() + 8.0,
+                     layout.plotArea.bottom() - metrics.height() - 26.0,
                      metrics.horizontalAdvance(label) + 14.0,
                      metrics.height() + 8.0};
     painter.setPen(QPen{display.frame, 1.0});
@@ -656,11 +847,13 @@ void PainterPlotBackend::render(QPainter& painter, QSize size) const
     drawSettingsBar(painter, size);
     painter.fillRect(layout.plotArea, display.background);
     drawGrid(painter, layout);
+    drawBands(painter, layout);
     for (const auto& series : m_series) {
         drawSeries(painter, layout, series);
     }
     drawMarkers(painter, layout);
     drawLegend(painter, layout);
+    drawVerdict(painter, layout);
     drawFooter(painter, layout);
 }
 

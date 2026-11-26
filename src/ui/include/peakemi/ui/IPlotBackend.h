@@ -34,7 +34,9 @@ enum class PlotRole : std::uint8_t
     Verified,
     Marker,
     MarkerFail,
-    MarkerMarginal
+    MarkerMarginal,
+    /// A limit for the average detector, told apart from the quasi-peak one.
+    LimitAverage
 };
 
 /// One curve in the plot: a live trace, a max-hold, a reference or a limit line.
@@ -49,6 +51,34 @@ struct PlotSeries
     /// x = frequency in hertz, y = amplitude in the plot's unit.
     QVector<QPointF> points;
     PlotRole role{PlotRole::Custom};
+    /// For a limit line: a translucent band this many dB below it, the zone in
+    /// which a reading is marginal. 0 draws none.
+    double marginBandDb{0.0};
+    /// For a points series: a role per point, e.g. each verified point's
+    /// verdict. Empty, or of another length, uses the series role throughout.
+    QVector<PlotRole> pointRoles;
+};
+
+/// How a measurement came out, for a plot that shows it the way an analyzer
+/// prints it on its display.
+enum class PlotOutcome : std::uint8_t
+{
+    None,
+    Pass,
+    Marginal,
+    Fail
+};
+
+struct PlotVerdictLine
+{
+    QString text; ///< "CISPR 32 Class B radiated 10 m (QP): Fail"
+    PlotOutcome outcome{PlotOutcome::None};
+};
+
+struct PlotVerdict
+{
+    PlotOutcome outcome{PlotOutcome::None}; ///< None shows nothing
+    QVector<PlotVerdictLine> lines;         ///< one per limit line
 };
 
 /// A flagged peak or a user marker.
@@ -96,6 +126,9 @@ public:
     /// ("RBW 120 kHz", "Det QP"), for a backend that shows them the way an
     /// analyzer does above its display. Optional: the default ignores them.
     virtual void setSettingsSummary(const QStringList& items) { Q_UNUSED(items) }
+
+    /// The pass/fail outcome to show on the plot. Optional: the default ignores it.
+    virtual void setVerdict(const PlotVerdict& verdict) { Q_UNUSED(verdict) }
 
     /// Off-screen render for the PDF report and the PNG export (FR-VIS-5).
     [[nodiscard]] virtual QImage renderToImage(QSize size) const = 0;
