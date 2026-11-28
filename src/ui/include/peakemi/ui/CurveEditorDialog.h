@@ -11,6 +11,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QTableWidget;
 
 namespace peakemi::ui {
@@ -42,6 +43,9 @@ public:
     void setCorrection(const CorrectionTable& table);
     [[nodiscard]] CorrectionTable correction() const;
 
+    /// What the OK button says; "Use in run" unless the caller says otherwise.
+    void setAcceptText(const QString& text);
+
 protected:
     void accept() override;
 
@@ -72,6 +76,7 @@ private:
     QTableWidget* m_points{nullptr};
     PainterPlotBackend* m_preview{nullptr};
     QLabel* m_problem{nullptr};
+    QPushButton* m_accept{nullptr};
 };
 
 } // namespace peakemi::ui

@@ -229,7 +229,8 @@ void CurveEditorDialog::buildUi()
     bottom->addWidget(save);
     bottom->addStretch(1);
     auto* buttons = new QDialogButtonBox{QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this};
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Use in run"));
+    m_accept = buttons->button(QDialogButtonBox::Ok);
+    m_accept->setText(tr("Use in run"));
     bottom->addWidget(buttons);
     layout->addLayout(bottom);
     connect(buttons, &QDialogButtonBox::accepted, this, &CurveEditorDialog::accept);
@@ -491,6 +492,11 @@ void CurveEditorDialog::saveFile()
     if (!status) {
         QMessageBox::warning(this, tr("Save"), QString::fromStdString(status.error().message()));
     }
+}
+
+void CurveEditorDialog::setAcceptText(const QString& text)
+{
+    m_accept->setText(text);
 }
 
 void CurveEditorDialog::accept()

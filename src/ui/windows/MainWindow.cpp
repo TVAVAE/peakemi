@@ -813,6 +813,15 @@ void MainWindow::onRunFinished(const Session& session)
         m_dirty = true;
         updateActionStates();
         updateWindowTitle();
+        // With a campaign test selected the results on screen are that test's:
+        // file them under it again, as a full run would be, so its verdict
+        // and the campaign report follow the re-measured points.
+        if (const auto* test = m_campaignDock->activeTest(); test != nullptr && test->session) {
+            Session updated = *test->session;
+            updated.results = m_session.results;
+            updated.meta.modifiedAt = m_session.meta.modifiedAt;
+            m_campaignDock->attachSession(updated);
+        }
         return;
     }
     m_session.results = session.results;
@@ -1028,6 +1037,10 @@ void MainWindow::verifyFrequencies(std::vector<Hertz> frequencies)
     }
     if (!m_connected || m_controller->isRunning()) {
         log(tr("Re-measuring needs a connected instrument and no run in progress."));
+        return;
+    }
+    if (m_campaignDock->activeTest() != nullptr && m_campaignDock->isLocked()) {
+        log(tr("The campaign is locked, so its measurements stay as they are."));
         return;
     }
     auto config = m_configDock->configuration();

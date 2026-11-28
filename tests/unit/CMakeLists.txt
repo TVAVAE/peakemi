@@ -69,6 +69,10 @@ peakemi_add_test(analysis
     SOURCES AnalysisTest.cpp
     LIBS    peakemi::ui)
 
+peakemi_add_test(workflow
+    SOURCES WorkflowTest.cpp
+    LIBS    peakemi::ui)
+
 peakemi_add_test(mainwindow
     SOURCES MainWindowTest.cpp
     LIBS    peakemi::ui)

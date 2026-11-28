@@ -79,6 +79,7 @@ private:
     void moveDevice(int offset);
     void setFixedCorrection();
     void importCorrection();
+    void editCorrection();
     void removeCorrection();
 
     std::vector<TestSetup> m_setups;

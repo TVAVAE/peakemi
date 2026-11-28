@@ -1,6 +1,7 @@
 #include <peakemi/core/LimitLineIo.h>
 #include <peakemi/core/SetupLibrary.h>
 #include <peakemi/reporting/SetupSheetRenderer.h>
+#include <peakemi/ui/CurveEditorDialog.h>
 #include <peakemi/ui/SetupLibraryDialog.h>
 
 #include <QComboBox>
@@ -97,6 +98,27 @@ const QString DirectoryKey = QStringLiteral("setups/directory");
         return flatCorrection("Preamplifier", CorrectionKind::AmplifierGain, 20.0);
     }
     return std::nullopt;
+}
+
+/// The kind of table a device role calls for, for a table written from scratch.
+[[nodiscard]] CorrectionKind correctionKindForRole(const QString& role)
+{
+    if (role == QObject::tr("Antenna")) {
+        return CorrectionKind::AntennaFactor;
+    }
+    if (role == QObject::tr("LISN")) {
+        return CorrectionKind::LisnFactor;
+    }
+    if (role == QObject::tr("RF cable")) {
+        return CorrectionKind::CableLoss;
+    }
+    if (role == QObject::tr("Attenuator") || role == QObject::tr("Transient limiter")) {
+        return CorrectionKind::Attenuator;
+    }
+    if (role == QObject::tr("Preamplifier")) {
+        return CorrectionKind::AmplifierGain;
+    }
+    return CorrectionKind::Other;
 }
 
 enum DeviceColumn
@@ -316,6 +338,7 @@ void SetupLibraryDialog::buildUi()
     m_correction = new QPushButton{tr("Correction"), right};
     auto* correctionMenu = new QMenu{m_correction};
     correctionMenu->addAction(tr("Fixed value…"), this, &SetupLibraryDialog::setFixedCorrection);
+    correctionMenu->addAction(tr("Edit table…"), this, &SetupLibraryDialog::editCorrection);
     correctionMenu->addAction(
         tr("Import table (CSV or JSON)…"), this, &SetupLibraryDialog::importCorrection);
     correctionMenu->addAction(tr("No correction"), this, &SetupLibraryDialog::removeCorrection);
@@ -932,6 +955,41 @@ void SetupLibraryDialog::importCorrection()
         return;
     }
     setup->devices[static_cast<std::size_t>(row)].correction = std::move(*table);
+    markDirty();
+    refreshDevices();
+    refreshSummary();
+}
+
+void SetupLibraryDialog::editCorrection()
+{
+    const auto* setup = current();
+    const int row = m_devices->currentRow();
+    if (setup == nullptr || row < 0 || static_cast<std::size_t>(row) >= setup->devices.size()) {
+        return;
+    }
+    const auto& device = setup->devices[static_cast<std::size_t>(row)];
+    CorrectionTable table;
+    if (device.correction) {
+        table = *device.correction;
+    } else {
+        // A new table named after the device, of the kind its role suggests.
+        table.name =
+            device.equipment.model.empty() ? device.equipment.role : device.equipment.model;
+        table.kind = correctionKindForRole(qs(device.equipment.role));
+    }
+
+    CurveEditorDialog editor{CurveEditorDialog::Mode::Correction, this};
+    editor.setAcceptText(tr("Use for this device"));
+    editor.setCorrection(table);
+    if (editor.exec() != QDialog::Accepted) {
+        return;
+    }
+    // Looked up again: the reference above does not outlive a modal loop.
+    auto* edited = current();
+    if (edited == nullptr || static_cast<std::size_t>(row) >= edited->devices.size()) {
+        return;
+    }
+    edited->devices[static_cast<std::size_t>(row)].correction = editor.correction();
     markDirty();
     refreshDevices();
     refreshSummary();
