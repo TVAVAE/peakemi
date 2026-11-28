@@ -25,6 +25,7 @@
 #include <peakemi/ui/RunConfigDock.h>
 #include <peakemi/ui/RunController.h>
 #include <peakemi/ui/SessionPlot.h>
+#include <peakemi/ui/SessionSetupDialog.h>
 #include <peakemi/ui/SetupLibraryDialog.h>
 
 #include <QApplication>
@@ -868,14 +869,21 @@ void MainWindow::applySetupFromLibrary(const TestSetup& setup)
         m_campaignDock->applySetup(setup);
         return;
     }
+    applySetupToSession(setup);
+}
+
+void MainWindow::applySetupToSession(const TestSetup& setup)
+{
     // No campaign test: the set-up's corrections go into the run configuration,
-    // and its name into the session's test set-up field, which the report prints.
+    // its name into the session's test set-up field, and a copy of it into the
+    // session, which the report draws.
     auto config = m_configDock->configuration();
     config.corrections = setup.corrections();
     m_configDock->setConfiguration(config);
     m_session.config = m_configDock->configuration();
     m_controller->setConfiguration(m_session.config);
     m_session.meta.testSetup = setup.name;
+    m_session.setup = setup;
     m_dirty = true;
     updateWindowTitle();
     log(tr("Set-up '%1' applied to the run configuration: %n correction(s).",
@@ -918,13 +926,27 @@ void MainWindow::newSession()
     if (!confirmDiscardChanges()) {
         return;
     }
+    // Which bench, asked first: cancelling it keeps the session there is.
+    std::optional<TestSetup> setup;
+    if (SessionSetupDialog::askOnNewSession()) {
+        SessionSetupDialog chooser{this};
+        if (chooser.hasSetups()) {
+            if (chooser.exec() != QDialog::Accepted) {
+                return;
+            }
+            setup = chooser.chosen();
+        }
+    }
     m_session = Session::createNew(std::string{ProjectVersion});
     m_session.config = m_configDock->configuration();
     m_sessionPath.clear();
-    m_dirty = false;
     m_resultsDock->clear();
     m_plot->clearSeries();
     showLimitOverlays();
+    if (setup) {
+        applySetupToSession(*setup);
+    }
+    m_dirty = false;
     updateActionStates();
     updateWindowTitle();
 }

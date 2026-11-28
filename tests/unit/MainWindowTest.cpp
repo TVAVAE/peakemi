@@ -8,6 +8,7 @@
 #include <peakemi/ui/ResultsDock.h>
 #include <peakemi/ui/ResultsTableModel.h>
 #include <peakemi/ui/RunConfigDock.h>
+#include <peakemi/ui/SetupDiagramView.h>
 
 #include <QApplication>
 #include <QBrush>
@@ -24,6 +25,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <cmath>
 
 using namespace peakemi;
@@ -47,6 +49,7 @@ private slots:
     void resultsStayReadableInEitherColourScheme();
     void aboutDialogCreditsLicenceAndSource();
     void logDockEmitsConsoleCommands();
+    void setupDiagramSwitchesAndSelects();
 };
 
 void MainWindowTest::initTestCase()
@@ -412,6 +415,57 @@ void MainWindowTest::logDockEmitsConsoleCommands()
 
     auto* console = dock.findChild<QPlainTextEdit*>(QStringLiteral("scpiConsole"));
     QVERIFY(console->toPlainText().contains(QStringLiteral("> *IDN?")));
+}
+
+void MainWindowTest::setupDiagramSwitchesAndSelects()
+{
+    ui::SetupDiagramView view;
+    view.resize(1100, 320);
+    const auto setup = TestSetup::createFor("AC bench", SetupMethod::LisnAc);
+    view.setSetup(&setup);
+    view.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&view));
+    const auto* diagram = view.diagram();
+    QVERIFY(diagram != nullptr);
+    QSignalSpy switched{&view, &ui::SetupDiagramView::slotSwitched};
+    QSignalSpy selected{&view, &ui::SetupDiagramView::deviceSelected};
+
+    const auto& blocks = diagram->blocks();
+    const auto named = [&blocks](const QString& caption) {
+        return std::find_if(blocks.begin(), blocks.end(), [&caption](const auto& block) {
+            return block.caption == caption;
+        });
+    };
+    const auto click = [&view](QPointF diagramPoint) {
+        QTest::mouseClick(&view, Qt::LeftButton, {}, view.toWidget(diagramPoint).toPoint());
+    };
+
+    // The attenuator is not in the set-up: its switch asks for it.
+    const auto attenuator = named(QStringLiteral("Attenuator"));
+    QVERIFY(attenuator != blocks.end());
+    click(diagram->switchRect(*attenuator).center());
+    QCOMPARE(switched.count(), 1);
+    QCOMPARE(switched.at(0).at(0).toInt(), attenuator->slot);
+    QCOMPARE(switched.at(0).at(1).toBool(), true);
+
+    // The cable is: its switch asks for it to go.
+    const auto cable = named(QStringLiteral("RF cable"));
+    QVERIFY(cable != blocks.end());
+    click(diagram->switchRect(*cable).center());
+    QCOMPARE(switched.count(), 2);
+    QCOMPARE(switched.at(1).at(1).toBool(), false);
+
+    // Clicking a device's block picks the device; the EUT is no device.
+    const auto lisn = std::find_if(blocks.begin(), blocks.end(), [](const auto& block) {
+        return block.place == SlotPlace::Coupling;
+    });
+    click(lisn->rect.center());
+    QCOMPARE(selected.count(), 1);
+    QCOMPARE(selected.at(0).at(0).toInt(), 0);
+    QCOMPARE(view.selectedDevice(), 0);
+    click(blocks.front().rect.center());
+    QCOMPARE(selected.count(), 1);
+    QCOMPARE(switched.count(), 2);
 }
 
 QTEST_MAIN(MainWindowTest)

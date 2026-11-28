@@ -3,6 +3,8 @@
 #include <peakemi/core/Logging.h>
 #include <peakemi/core/Time.h>
 #include <peakemi/reporting/PdfReportRenderer.h>
+#include <peakemi/reporting/SetupDiagram.h>
+#include <peakemi/reporting/SetupSheetRenderer.h>
 
 #include <QColor>
 #include <QFileInfo>
@@ -11,8 +13,11 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QRectF>
+#include <QStringList>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 
@@ -338,12 +343,62 @@ Status PdfReportRenderer::render(const Session& session,
                                                    QString::fromStdString(limit.standard)));
     }
 
+    // --- Test set-up ----------------------------------------------------------
+    if (session.setup) {
+        const auto& setup = *session.setup;
+        cursor.advance(3.0);
+        // A diagram pixel to a fifth of a millimetre keeps its text legible;
+        // a wide chain is shrunk to the page.
+        const SetupDiagram diagram{setup, false};
+        const int width = std::min(cursor.width(), toDots(diagram.size().width() * 0.2));
+        const QImage image = diagram.toImage(2.0, DiagramColours::forPrint())
+                                 .scaledToWidth(width, Qt::SmoothTransformation);
+        const double heightMm = static_cast<double>(image.height()) / Resolution * 25.4;
+        cursor.ensure(2.0 * LineHeightMm + heightMm);
+        cursor.text(QObject::tr("Test set-up: %1").arg(qs(setup.name)), headingFont);
+        cursor.text(qs(setupMethodName(setup.method)), bodyFont);
+        painter.drawImage(QPoint{cursor.left(), cursor.y()}, image);
+        cursor.advance(heightMm + 2.0);
+        // Judged on the day of the measurement, not of the report.
+        const TimePoint measured = session.meta.createdAt == TimePoint{}
+                                       ? std::chrono::system_clock::now()
+                                       : session.meta.createdAt;
+        for (const auto& device : setup.devices) {
+            if (!device.inUse) {
+                continue;
+            }
+            const auto& item = device.equipment;
+            QStringList parts;
+            parts << (item.model.empty() ? QObject::tr("model not recorded") : qs(item.model));
+            if (!item.serial.empty()) {
+                parts << QObject::tr("S/N %1").arg(qs(item.serial));
+            }
+            if (!item.calibrationDue.empty()) {
+                parts << (item.calibrationExpired(measured)
+                              ? QObject::tr("calibration EXPIRED (due %1)")
+                              : QObject::tr("calibration due %1"))
+                             .arg(qs(item.calibrationDue));
+            }
+            if (device.correction) {
+                parts << QStringLiteral("%1 %2").arg(correctionKindName(device.correction->kind),
+                                                     describeCorrection(*device.correction));
+            }
+            drawKeyValue(painter,
+                         cursor,
+                         keyFont,
+                         bodyFont,
+                         qs(item.role),
+                         parts.join(QStringLiteral(", ")));
+        }
+    }
+
     // --- Plot ---------------------------------------------------------------
     if (reportTemplate.includeTracePlot && !m_plot.isNull()) {
         cursor.advance(3.0);
-        cursor.text(QObject::tr("Spectrum"), headingFont);
         const QImage scaled = m_plot.scaledToWidth(cursor.width(), Qt::SmoothTransformation);
-        cursor.ensure(static_cast<double>(scaled.height()) / Resolution * 25.4);
+        // The heading goes over to the next page with its plot.
+        cursor.ensure(LineHeightMm + static_cast<double>(scaled.height()) / Resolution * 25.4);
+        cursor.text(QObject::tr("Spectrum"), headingFont);
         painter.drawImage(QPoint{cursor.left(), cursor.y()}, scaled);
         cursor.advance(static_cast<double>(scaled.height()) / Resolution * 25.4 + 3.0);
     }

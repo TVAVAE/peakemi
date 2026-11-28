@@ -18,6 +18,8 @@ class QTableWidget;
 
 namespace peakemi::ui {
 
+class SetupDiagramView;
+
 /// The folder the set-up library lives in: the one chosen in the dialog, else
 /// the application's own.
 [[nodiscard]] QString setupLibraryDirectory();
@@ -58,13 +60,15 @@ private:
     void selectRow(int row);
     void showCurrent();
     void refreshDevices();
+    void refreshDiagram();
+    void switchSlot(int slot, bool inUse);
     void refreshSummary();
     void updateEnabledState();
     void markDirty();
     [[nodiscard]] bool confirmLeave();
     [[nodiscard]] TestSetup* current();
 
-    void newSetup(TestKind kind);
+    void newSetup(SetupMethod method);
     void duplicateSetup();
     void deleteSetup();
     bool saveCurrent();
@@ -97,8 +101,9 @@ private:
     QPushButton* m_export{nullptr};
 
     QLineEdit* m_name{nullptr};
-    QComboBox* m_kind{nullptr};
+    QComboBox* m_method{nullptr};
     QPlainTextEdit* m_description{nullptr};
+    SetupDiagramView* m_diagram{nullptr};
     QTableWidget* m_devices{nullptr};
     QPushButton* m_addDevice{nullptr};
     QPushButton* m_removeDevice{nullptr};

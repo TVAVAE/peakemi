@@ -1,5 +1,6 @@
 #pragma once
 
+#include <peakemi/core/Equipment.h>
 #include <peakemi/core/Error.h>
 #include <peakemi/core/MeasurementPoint.h>
 #include <peakemi/core/RunConfiguration.h>
@@ -27,33 +28,6 @@ enum class TestVerdict : std::uint8_t
 
 [[nodiscard]] std::string_view testVerdictKey(TestVerdict verdict);
 [[nodiscard]] std::optional<TestVerdict> testVerdictFromKey(std::string_view key);
-
-/// What a test measures, which decides the equipment it is set up with.
-enum class TestKind : std::uint8_t
-{
-    Conducted,
-    Radiated,
-    Other
-};
-
-[[nodiscard]] std::string_view testKindKey(TestKind kind);
-[[nodiscard]] std::optional<TestKind> testKindFromKey(std::string_view key);
-
-/// One instrument or accessory in a test setup, as a lab lists it in a report.
-struct EquipmentItem
-{
-    std::string role;  ///< "Spectrum analyzer", "LISN", "Antenna", "Cable", ...
-    std::string model; ///< "R&S FSL6"
-    std::string serial;
-    /// Calibration due date as "YYYY-MM-DD"; empty when the item is not calibrated.
-    std::string calibrationDue;
-
-    /// Whether the calibration had lapsed on @p asOf. False when no due date is
-    /// set or it cannot be read: an unreadable date is not evidence of expiry.
-    [[nodiscard]] bool calibrationExpired(TimePoint asOf) const;
-
-    friend bool operator==(const EquipmentItem&, const EquipmentItem&) = default;
-};
 
 /// A photo of the test setup. The image is kept inside the campaign file, so a
 /// campaign is one self-contained record rather than a file plus loose pictures.

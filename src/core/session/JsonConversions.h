@@ -44,6 +44,9 @@ using Json = nlohmann::json;
 [[nodiscard]] Json toJson(const RunConfiguration& value);
 [[nodiscard]] Result<RunConfiguration> runConfigurationFromJson(const Json& json);
 
+[[nodiscard]] Json toJson(const TestSetup& value);
+[[nodiscard]] Result<TestSetup> testSetupFromJson(const Json& json);
+
 [[nodiscard]] Json toJson(const SessionMeta& value);
 [[nodiscard]] SessionMeta sessionMetaFromJson(const Json& json);
 
