@@ -716,6 +716,8 @@ void SetupDiagram::paintBlock(
         QColor colour;
         bool italic{false};
         bool bold{false};
+        /// Lower goes first when the block has no room for every line.
+        int priority{0};
     };
 
     std::vector<Line> lines;
@@ -733,32 +735,43 @@ void SetupDiagram::paintBlock(
         const auto& device = m_setup.devices[static_cast<std::size_t>(block.device)];
         const auto& item = device.equipment;
         if (item.model.empty()) {
-            lines.push_back({QStringLiteral("Model not entered"), colours.muted, true});
+            lines.push_back({QStringLiteral("Model not entered"), colours.muted, true, false, 4});
         } else {
-            lines.push_back({qs(item.model), ink});
+            lines.push_back({qs(item.model), ink, false, false, 4});
         }
         if (device.correction) {
-            lines.push_back({shortCorrection(*device.correction), colours.muted});
+            lines.push_back({shortCorrection(*device.correction), colours.muted, false, false, 2});
         } else if (!item.serial.empty()) {
-            lines.push_back({QStringLiteral("S/N %1").arg(qs(item.serial)), colours.muted});
-        }
-        if (!device.inUse) {
-            lines.push_back({QStringLiteral("Switched off"), colours.muted, true});
-        } else if (item.calibrationExpired(now)) {
-            lines.push_back({QStringLiteral("Calibration expired"), colours.warning, false, true});
-        } else if (!item.calibrationDue.empty()) {
             lines.push_back(
-                {QStringLiteral("Cal. due %1").arg(qs(item.calibrationDue)), colours.muted});
+                {QStringLiteral("S/N %1").arg(qs(item.serial)), colours.muted, false, false, 1});
+        }
+        // A warning outranks the correction when a two-line caption leaves
+        // room for only two lines; a due date that is fine goes first.
+        if (!device.inUse) {
+            lines.push_back({QStringLiteral("Switched off"), colours.muted, true, false, 3});
+        } else if (item.calibrationExpired(now)) {
+            lines.push_back(
+                {QStringLiteral("Calibration expired"), colours.warning, false, true, 3});
+        } else if (!item.calibrationDue.empty()) {
+            lines.push_back({QStringLiteral("Cal. due %1").arg(qs(item.calibrationDue)),
+                             colours.muted,
+                             false,
+                             false,
+                             0});
         }
     }
     const QFontMetricsF bodyMetrics{bodyFont};
     double y = std::max(rect.top() + 10.0 + GlyphSize + 4.0, used.bottom() + 3.0);
     const double left = rect.left() + 10.0;
     const double width = rect.width() - 18.0;
+    const auto room = static_cast<std::size_t>(
+        std::max(0.0, std::floor((rect.bottom() - 3.0 - y) / bodyMetrics.lineSpacing())));
+    while (lines.size() > room) {
+        lines.erase(std::min_element(lines.begin(), lines.end(), [](const Line& a, const Line& b) {
+            return a.priority < b.priority;
+        }));
+    }
     for (const auto& entry : lines) {
-        if (y + bodyMetrics.height() > rect.bottom() - 3.0) {
-            break;
-        }
         QFont font = bodyFont;
         font.setItalic(entry.italic);
         font.setBold(entry.bold);

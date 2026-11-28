@@ -268,7 +268,7 @@ void SetupLibraryDialog::buildUi()
     m_devices->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_devices->setSelectionMode(QAbstractItemView::SingleSelection);
     m_devices->horizontalHeader()->setStretchLastSection(true);
-    m_devices->setColumnWidth(ColumnRole, 120);
+    m_devices->setColumnWidth(ColumnRole, 160);
     m_devices->setColumnWidth(ColumnModel, 150);
     m_devices->setColumnWidth(ColumnSerial, 100);
     m_devices->setColumnWidth(ColumnCalibration, 110);
