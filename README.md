@@ -216,6 +216,22 @@ Available configure presets: `debug`, `release`, `relwithdebinfo`, `dev` (saniti
 Both binaries land in `build/<preset>/bin/`: `peakemi`, the application, and `peakemi-cli`,
 the headless runner.
 
+### On Windows, in one command
+
+From PowerShell in the source folder:
+
+```powershell
+scripts\windows\build.ps1
+```
+
+It finds Visual Studio's C++ compiler (2022 or its Build Tools), Qt (the newest
+`C:\Qt\6.x.y\msvc2022_64`, or `-QtDir` / `CMAKE_PREFIX_PATH`), and CMake and Ninja (on
+`PATH`, or installed with `py -m pip install --user cmake ninja`); configures the `release`
+preset the first time; builds; copies the Qt libraries next to `peakemi.exe`; and starts it.
+`-NoRun` only builds, `-Test` also runs the tests, `-Preset debug` picks another preset, and
+`-Restart` closes a PeakEmi running from that build first. `Get-Help scripts\windows\build.ps1`
+lists it all.
+
 ### Build options
 
 | Option | Default | Effect |
