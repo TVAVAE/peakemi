@@ -1,8 +1,11 @@
 #include <peakemi/ui/ResultsDock.h>
 #include <peakemi/ui/ResultsTableModel.h>
 
+#include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QPushButton>
 #include <QSortFilterProxyModel>
 #include <QTableView>
 #include <QVBoxLayout>
@@ -29,15 +32,34 @@ ResultsDock::ResultsDock(QWidget* parent) : QDockWidget{tr("Results"), parent}
     m_view->setObjectName(QStringLiteral("resultsView"));
     m_view->setSortingEnabled(true);
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_view->setSelectionMode(QAbstractItemView::SingleSelection);
+    // Several rows at once: they can be re-measured together.
+    m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_view->setAlternatingRowColors(true);
     m_view->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
     m_view->verticalHeader()->setVisible(false);
     layout->addWidget(m_view, 1);
 
+    auto* footer = new QHBoxLayout;
     m_summary = new QLabel{tr("No results yet."), content};
     m_summary->setWordWrap(true);
-    layout->addWidget(m_summary);
+    m_remeasure = new QPushButton{tr("Re-measure selected"), content};
+    m_remeasure->setObjectName(QStringLiteral("remeasureSelected"));
+    m_remeasure->setToolTip(tr("Measure the selected points again with the verification detector, "
+                               "without a new scan -- e.g. after a change to the equipment under "
+                               "test. The new values replace the old ones."));
+    footer->addWidget(m_summary, 1);
+    footer->addWidget(m_remeasure);
+    layout->addLayout(footer);
+    connect(m_remeasure, &QPushButton::clicked, this, [this] {
+        std::vector<Hertz> frequencies;
+        for (const auto& index : m_view->selectionModel()->selectedRows()) {
+            frequencies.push_back(hertz(index.data(ResultsTableModel::FrequencyRole).toLongLong()));
+        }
+        std::sort(frequencies.begin(), frequencies.end());
+        if (!frequencies.empty()) {
+            emit remeasureRequested(frequencies);
+        }
+    });
 
     setWidget(content);
 
@@ -51,6 +73,52 @@ ResultsDock::ResultsDock(QWidget* parent) : QDockWidget{tr("Results"), parent}
                 const auto frequency = current.data(ResultsTableModel::FrequencyRole).toLongLong();
                 emit pointSelected(hertz(frequency));
             });
+    connect(m_view->selectionModel(),
+            &QItemSelectionModel::selectionChanged,
+            this,
+            &ResultsDock::updateRemeasureButton);
+    updateRemeasureButton();
+}
+
+void ResultsDock::setRemeasureEnabled(bool enabled)
+{
+    m_remeasureEnabled = enabled;
+    updateRemeasureButton();
+}
+
+void ResultsDock::updateRemeasureButton()
+{
+    const auto count = m_view->selectionModel()->selectedRows().size();
+    m_remeasure->setEnabled(m_remeasureEnabled && count > 0);
+    m_remeasure->setText(count > 1 ? tr("Re-measure %1 selected").arg(count)
+                                   : tr("Re-measure selected"));
+}
+
+void ResultsDock::mergePoints(const std::vector<MeasurementPoint>& measured, Hertz tolerance)
+{
+    auto points = m_model->points();
+    for (const auto& point : measured) {
+        // The stored point nearest to the new one, if it is close enough to
+        // be the same emission: the drift span lets the frequency move.
+        auto nearest = points.end();
+        std::int64_t best = tolerance.value();
+        for (auto it = points.begin(); it != points.end(); ++it) {
+            const auto distance = std::abs((it->frequency - point.frequency).value());
+            if (distance <= best) {
+                best = distance;
+                nearest = it;
+            }
+        }
+        if (nearest != points.end()) {
+            *nearest = point;
+        } else {
+            points.push_back(point);
+        }
+    }
+    std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) {
+        return a.frequency < b.frequency;
+    });
+    setPoints(std::move(points));
 }
 
 const std::vector<MeasurementPoint>& ResultsDock::points() const

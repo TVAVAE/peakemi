@@ -53,6 +53,10 @@ peakemi_add_test(commandline
     SOURCES CommandLineTest.cpp
     LIBS    peakemi::cli)
 
+peakemi_add_test(analysis
+    SOURCES AnalysisTest.cpp
+    LIBS    peakemi::ui)
+
 peakemi_add_test(mainwindow
     SOURCES MainWindowTest.cpp
     LIBS    peakemi::ui)

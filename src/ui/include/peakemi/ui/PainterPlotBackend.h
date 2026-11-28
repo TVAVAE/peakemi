@@ -9,7 +9,10 @@
 #include <optional>
 #include <vector>
 
+class QColor;
+class QFontMetricsF;
 class QPainter;
+class QRectF;
 
 namespace peakemi::ui {
 
@@ -44,6 +47,27 @@ public:
     void setSettingsSummary(const QStringList& items) override;
     void setVerdict(const PlotVerdict& verdict) override;
 
+    /// Series drawn under the measurement and kept when it is replaced or
+    /// cleared: reference traces and the results of trace math.
+    void setOverlaySeries(const QVector<PlotSeries>& overlays);
+
+    /// A marker the user placed, read off the measurement at its frequency.
+    struct UserMarker
+    {
+        int number{1};
+        double frequency{0.0};
+    };
+
+    /// Put marker @p number (1 or 2) at the highest point of the measurement
+    /// within a few pixels of @p frequency, as an analyzer's peak search does.
+    void placeUserMarker(int number, double frequency);
+    void clearUserMarkers();
+
+    [[nodiscard]] const QVector<UserMarker>& userMarkers() const { return m_userMarkers; }
+
+    /// The measurement's level at @p frequency, or NaN without a measurement.
+    [[nodiscard]] double measuredAmplitudeAt(double frequency) const;
+
     /// Draw the display in @p scheme rather than in the interface's current
     /// one. The report sets Light: it is printed on white paper whatever the
     /// operator's screen looked like.
@@ -62,6 +86,9 @@ signals:
     /// The user clicked near a marker; the index refers to setMarkers().
     void markerActivated(int index);
     void viewChanged();
+    /// The user asked, from the plot's context menu, for the peak at this
+    /// frequency to be measured now with the verification detector.
+    void measurePeakRequested(double frequencyHz);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -73,6 +100,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     struct Layout
@@ -95,6 +123,13 @@ private:
 
     void render(QPainter& painter, QSize size) const;
     void drawSettingsBar(QPainter& painter, QSize size) const;
+    /// A strip of "key value" items, the key in @p keyColour.
+    void drawBar(QPainter& painter,
+                 const QRectF& bar,
+                 const QStringList& items,
+                 const QColor& keyColour) const;
+    /// Height of the legend box and its offset from the top of the display.
+    [[nodiscard]] double legendHeight(const QFontMetricsF& metrics) const;
     void drawGrid(QPainter& painter, const Layout& layout) const;
     void drawFooter(QPainter& painter, const Layout& layout) const;
     void drawBands(QPainter& painter, const Layout& layout) const;
@@ -104,6 +139,14 @@ private:
     void drawMarkers(QPainter& painter, const Layout& layout) const;
     void drawLegend(QPainter& painter, const Layout& layout) const;
     void drawCursor(QPainter& painter, const Layout& layout) const;
+    void drawUserMarkers(QPainter& painter, const Layout& layout, QSize size) const;
+    /// The measurement: the trace series, or else the first line series.
+    [[nodiscard]] const PlotSeries* measurement() const;
+    /// The overlays and the series; overlays first when drawing, so the
+    /// measurement stays on top, and last in the legend.
+    [[nodiscard]] std::vector<const PlotSeries*> allSeries(bool overlaysFirst) const;
+    /// Frequency of the measurement's highest point within @p pixels of @p x.
+    [[nodiscard]] double peakNear(const Layout& layout, double x, double pixels) const;
 
     void zoomFrequency(double factor, double anchorFrequency);
 
@@ -111,6 +154,8 @@ private:
     QVector<PlotMarker> m_markers;
     QStringList m_settings;
     PlotVerdict m_verdict;
+    QVector<PlotSeries> m_overlays;
+    QVector<UserMarker> m_userMarkers;
     std::optional<Scheme> m_scheme;
     QString m_amplitudeLabel{QStringLiteral("dBuV")};
 

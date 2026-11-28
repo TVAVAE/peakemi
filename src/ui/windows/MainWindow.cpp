@@ -23,6 +23,7 @@
 #include <peakemi/ui/RunController.h>
 #include <peakemi/ui/SessionPlot.h>
 #include <peakemi/ui/Theme.h>
+#include <peakemi/ui/TracesDock.h>
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -45,6 +46,9 @@
 #include <QToolButton>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <utility>
 
 namespace peakemi::ui {
 namespace {
@@ -407,6 +411,27 @@ void MainWindow::createDocks()
     connect(m_logDock, &LogDock::commandEntered, m_controller, &RunController::sendRawCommand);
 
     tabifyDockWidget(m_resultsDock, m_logDock);
+
+    // Reference traces and trace math, overlaid on the measurement.
+    m_tracesDock = new TracesDock{this};
+    addDockWidget(Qt::BottomDockWidgetArea, m_tracesDock);
+    tabifyDockWidget(m_resultsDock, m_tracesDock);
+    connect(m_tracesDock, &TracesDock::overlaysChanged, this, [this] {
+        // A reference just added is brought into view, with room for its
+        // legend entry; hiding or removing one leaves the view alone.
+        const auto overlays = m_tracesDock->overlaySeries();
+        const bool added = overlays.size() > m_overlayCount;
+        m_overlayCount = overlays.size();
+        m_plot->setOverlaySeries(overlays);
+        if (added) {
+            m_plot->autoScale();
+        }
+    });
+    connect(m_tracesDock, &TracesDock::statusMessage, this, &MainWindow::log);
+    connect(m_resultsDock, &ResultsDock::remeasureRequested, this, &MainWindow::verifyFrequencies);
+    connect(m_plot, &PainterPlotBackend::measurePeakRequested, this, [this](double frequency) {
+        verifyFrequencies({Hertz{static_cast<std::int64_t>(std::llround(frequency))}});
+    });
     m_resultsDock->raise();
 
     auto* viewMenu = menuBar()->findChild<QMenu*>();
@@ -417,6 +442,7 @@ void MainWindow::createDocks()
             action->menu()->addAction(m_configDock->toggleViewAction());
             action->menu()->addAction(m_resultsDock->toggleViewAction());
             action->menu()->addAction(m_logDock->toggleViewAction());
+            action->menu()->addAction(m_tracesDock->toggleViewAction());
         }
     }
 }
@@ -482,6 +508,7 @@ void MainWindow::updateActionStates()
     m_disconnectAction->setEnabled(m_connected && !running);
     m_configDock->setEditingEnabled(!running);
     m_instrumentDock->setConnected(m_connected);
+    m_resultsDock->setRemeasureEnabled(m_connected && !running);
 
     const bool hasResults = !m_session.results.empty();
     m_exportResultsAction->setEnabled(hasResults);
@@ -637,6 +664,7 @@ void MainWindow::onTraceAcquired(const TracePtr& trace)
         return;
     }
     m_session.traces.push_back(*trace);
+    m_tracesDock->setCurrentTrace(*trace);
 
     PlotSeries series;
     series.id = QStringLiteral("trace:live");
@@ -684,7 +712,12 @@ void MainWindow::refreshMarkers()
 
 void MainWindow::onPointMeasured(const MeasurementPoint& point)
 {
-    m_resultsDock->appendPoint(point);
+    if (m_verifyOnly) {
+        // A re-measurement takes the place of the point it re-measures.
+        m_resultsDock->mergePoints({point}, m_verifyTolerance);
+    } else {
+        m_resultsDock->appendPoint(point);
+    }
 
     // Verified points are drawn on top of the scan as discrete markers.
     PlotSeries verified;
@@ -725,6 +758,7 @@ void MainWindow::onProgress(int completed, int total, qint64 estimatedRemainingM
 void MainWindow::onRunFailed(const Error& error)
 {
     m_progress->setVisible(false);
+    m_verifyOnly = false;
     const auto message = QString::fromStdString(error.message());
     log(tr("Run failed: %1").arg(message));
     QMessageBox::warning(this, tr("Run failed"), message);
@@ -733,6 +767,17 @@ void MainWindow::onRunFailed(const Error& error)
 void MainWindow::onRunFinished(const Session& session)
 {
     m_progress->setVisible(false);
+    if (std::exchange(m_verifyOnly, false)) {
+        // Only the re-measured points came back; the rest of the results stand.
+        m_session.results = m_resultsDock->points();
+        m_session.meta.modifiedAt = std::chrono::system_clock::now();
+        m_plot->setVerdict(
+            plotVerdict(m_session.results, m_session.config.limits, !m_session.traces.empty()));
+        m_dirty = true;
+        updateActionStates();
+        updateWindowTitle();
+        return;
+    }
     m_session.results = session.results;
     m_session.meta = session.meta;
     m_resultsDock->setPoints(session.results);
@@ -782,6 +827,36 @@ void MainWindow::startRun()
     log(tr("Run started."));
 }
 
+void MainWindow::verifyFrequencies(std::vector<Hertz> frequencies)
+{
+    if (frequencies.empty()) {
+        return;
+    }
+    if (!m_connected || m_controller->isRunning()) {
+        log(tr("Re-measuring needs a connected instrument and no run in progress."));
+        return;
+    }
+    auto config = m_configDock->configuration();
+    config.verifyOnly = std::move(frequencies);
+    config.autosave = false;
+    if (auto status = config.validate(); !status) {
+        QMessageBox::warning(
+            this, tr("Configuration incomplete"), QString::fromStdString(status.error().message()));
+        return;
+    }
+    // A re-measured point replaces the stored one it lies within half a
+    // verification span of; in zero span, within 10 kHz.
+    m_verifyTolerance = std::max(config.verificationSpan / 2, kilohertz(10));
+    m_verifyOnly = true;
+    const auto count = static_cast<int>(config.verifyOnly.size());
+    const auto detector = detectorKey(config.verificationDetector);
+    m_controller->setConfiguration(config);
+    m_controller->setSessionMeta(m_session.meta);
+    m_controller->start();
+    log(tr("Re-measuring %n peak(s) with the %1 detector.", nullptr, count)
+            .arg(QString::fromUtf8(detector.data(), static_cast<qsizetype>(detector.size()))));
+}
+
 void MainWindow::togglePause()
 {
     if (m_phase == MeasurementEngine::Phase::Paused) {
@@ -823,6 +898,7 @@ void MainWindow::newSession()
     m_resultsDock->clear();
     m_plot->clearSeries();
     m_plot->setVerdict(PlotVerdict{});
+    m_tracesDock->setCurrentTrace(std::nullopt);
     showLimitOverlays();
     updatePlotSettings();
     updateActionStates();
@@ -871,6 +947,9 @@ void MainWindow::openSessionFile(const QString& path)
         m_plot->setSeries(series);
         m_plot->setAmplitudeLabel(qs(amplitudeUnitKey(trace.unit)));
         m_plot->autoScale();
+        m_tracesDock->setCurrentTrace(trace);
+    } else {
+        m_tracesDock->setCurrentTrace(std::nullopt);
     }
     updatePlotSettings();
     updateActionStates();

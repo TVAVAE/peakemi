@@ -40,6 +40,11 @@ struct RunConfiguration
     int verificationPoints{101};
     /// Override the CISPR-mandated RBW; 0 keeps the mandated value.
     Hertz verificationRbw{0};
+    /// Frequencies to verify without a Phase 1 scan. When not empty, the run
+    /// skips the scan and dwells on these, which is how selected peaks are
+    /// re-measured after a change to the equipment under test. Not part of a
+    /// saved configuration: it describes one run, not a set-up.
+    std::vector<Hertz> verifyOnly;
 
     // --- Commands around the run (FR-RUN-9) ---------------------------------
     /// Sent, in order, once the instrument is ready and before the first sweep.

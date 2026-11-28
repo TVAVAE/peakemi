@@ -1,17 +1,21 @@
 #include <peakemi/core/CisprBands.h>
 #include <peakemi/ui/PainterPlotBackend.h>
 
+#include <QContextMenuEvent>
 #include <QFontMetricsF>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QStringList>
 #include <QSvgGenerator>
 #include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <limits>
 #include <numeric>
 
@@ -27,6 +31,14 @@ constexpr double BottomMargin = 58.0;
 /// The settings bar along the top, drawn when there are settings to show.
 constexpr double Padding = 8.0;
 constexpr double BarHeight = 24.0;
+/// Pixels kept clear above the highest point: the verdict box and the label
+/// over a flagged peak.
+constexpr double MinimumTopRoom = 60.0;
+constexpr double PeakLabelRoom = 36.0;
+/// Share of the display above the highest point, however short the legend
+/// and however tall the legend.
+constexpr double DefaultTopFraction = 0.27;
+constexpr double MaximumTopFraction = 0.5;
 constexpr double MinimumSpanHz = 1000.0;
 
 /// @p colour at @p alpha, for the boxes drawn over the trace.
@@ -167,7 +179,8 @@ void PainterPlotBackend::autoScale()
     double maximumAmplitude = std::numeric_limits<double>::lowest();
     bool any = false;
 
-    for (const auto& series : m_series) {
+    for (const auto* entry : allSeries(true)) {
+        const auto& series = *entry;
         if (!series.visible) {
             continue;
         }
@@ -188,11 +201,19 @@ void PainterPlotBackend::autoScale()
 
     // More room above than below: the verdict, the legend and the peak labels
     // sit at the top of the display and should not cover the highest peaks.
+    // A legend with references in it grows down, so the room grows with it.
     const double range = maximumAmplitude - minimumAmplitude;
     m_frequencyStart = minimumFrequency;
     m_frequencyStop = std::max(maximumFrequency, minimumFrequency + MinimumSpanHz);
-    m_amplitudeMinimum = minimumAmplitude - std::max(2.0, range * 0.1);
-    m_amplitudeMaximum = maximumAmplitude + std::max(6.0, range * 0.4);
+    const double below = std::max(2.0, range * 0.1);
+    m_amplitudeMinimum = minimumAmplitude - below;
+    const double plotHeight = layoutFor(size()).plotArea.height();
+    const double reserved =
+        std::max(legendHeight(QFontMetricsF{font()}) + 8.0, MinimumTopRoom) + PeakLabelRoom;
+    const double topFraction =
+        std::clamp(reserved / std::max(plotHeight, 1.0), DefaultTopFraction, MaximumTopFraction);
+    m_amplitudeMaximum = std::max(maximumAmplitude + 6.0,
+                                  m_amplitudeMinimum + (range + below) / (1.0 - topFraction));
     emit viewChanged();
     update();
 }
@@ -212,6 +233,109 @@ void PainterPlotBackend::setSettingsSummary(const QStringList& items)
 void PainterPlotBackend::setVerdict(const PlotVerdict& verdict)
 {
     m_verdict = verdict;
+    update();
+}
+
+void PainterPlotBackend::setOverlaySeries(const QVector<PlotSeries>& overlays)
+{
+    m_overlays = overlays;
+    update();
+}
+
+std::vector<const PlotSeries*> PainterPlotBackend::allSeries(bool overlaysFirst) const
+{
+    std::vector<const PlotSeries*> all;
+    all.reserve(m_series.size() + static_cast<std::size_t>(m_overlays.size()));
+    const auto addOverlays = [&all, this] {
+        for (const auto& series : m_overlays) {
+            all.push_back(&series);
+        }
+    };
+    if (overlaysFirst) {
+        addOverlays();
+    }
+    for (const auto& series : m_series) {
+        all.push_back(&series);
+    }
+    if (!overlaysFirst) {
+        addOverlays();
+    }
+    return all;
+}
+
+const PlotSeries* PainterPlotBackend::measurement() const
+{
+    const PlotSeries* firstLine = nullptr;
+    for (const auto& series : m_series) {
+        if (!series.visible || series.points.isEmpty()) {
+            continue;
+        }
+        if (series.role == PlotRole::Trace) {
+            return &series;
+        }
+        const bool limit = series.role == PlotRole::Limit || series.role == PlotRole::LimitAverage;
+        if (firstLine == nullptr && series.style == PlotStyle::Line && !limit) {
+            firstLine = &series;
+        }
+    }
+    return firstLine;
+}
+
+double PainterPlotBackend::measuredAmplitudeAt(double frequency) const
+{
+    const auto* series = measurement();
+    if (series == nullptr) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const auto& points = series->points;
+    const auto found = std::lower_bound(
+        points.begin(), points.end(), frequency, [](const QPointF& point, double value) {
+            return point.x() < value;
+        });
+    if (found == points.end()) {
+        return points.back().y();
+    }
+    if (found == points.begin()) {
+        return found->y();
+    }
+    const auto before = std::prev(found);
+    return frequency - before->x() < found->x() - frequency ? before->y() : found->y();
+}
+
+double PainterPlotBackend::peakNear(const Layout& layout, double x, double pixels) const
+{
+    const double centre = fromX(layout, x);
+    const auto* series = measurement();
+    if (series == nullptr) {
+        return centre;
+    }
+    const double low = fromX(layout, x - pixels);
+    const double high = fromX(layout, x + pixels);
+    double best = centre;
+    double level = std::numeric_limits<double>::lowest();
+    for (const auto& point : series->points) {
+        if (point.x() >= low && point.x() <= high && std::isfinite(point.y()) && point.y() > level)
+        {
+            level = point.y();
+            best = point.x();
+        }
+    }
+    return best;
+}
+
+void PainterPlotBackend::placeUserMarker(int number, double frequency)
+{
+    m_userMarkers.removeIf([number](const UserMarker& marker) { return marker.number == number; });
+    m_userMarkers.append(UserMarker{.number = number, .frequency = frequency});
+    std::sort(m_userMarkers.begin(), m_userMarkers.end(), [](const auto& a, const auto& b) {
+        return a.number < b.number;
+    });
+    update();
+}
+
+void PainterPlotBackend::clearUserMarkers()
+{
+    m_userMarkers.clear();
     update();
 }
 
@@ -268,7 +392,8 @@ QColor PainterPlotBackend::colourFor(PlotRole role, const QColor& fallback) cons
 
 PainterPlotBackend::Layout PainterPlotBackend::layoutFor(QSize size) const
 {
-    const double top = TopMargin + (m_settings.isEmpty() ? 0.0 : Padding + BarHeight + 4.0);
+    const int bars = (m_settings.isEmpty() ? 0 : 1) + (m_userMarkers.isEmpty() ? 0 : 1);
+    const double top = TopMargin + (bars == 0 ? 0.0 : Padding + bars * (BarHeight + 4.0));
     Layout layout;
     layout.plotArea = QRectF{LeftMargin,
                              top,
@@ -332,8 +457,18 @@ void PainterPlotBackend::drawSettingsBar(QPainter& painter, QSize size) const
     if (m_settings.isEmpty()) {
         return;
     }
+    drawBar(painter,
+            QRectF{Padding, Padding, size.width() - 2.0 * Padding, BarHeight},
+            m_settings,
+            colours().mutedText);
+}
+
+void PainterPlotBackend::drawBar(QPainter& painter,
+                                 const QRectF& bar,
+                                 const QStringList& items,
+                                 const QColor& keyColour) const
+{
     const auto display = colours();
-    const QRectF bar{Padding, Padding, size.width() - 2.0 * Padding, BarHeight};
     painter.setPen(Qt::NoPen);
     painter.setBrush(display.barBackground);
     painter.drawRoundedRect(bar, 4.0, 4.0);
@@ -349,8 +484,8 @@ void PainterPlotBackend::drawSettingsBar(QPainter& painter, QSize size) const
     // "RBW 120 kHz": the key muted, the value emphasised, as an analyzer
     // labels the settings above its display.
     double x = bar.left() + 10.0;
-    for (int i = 0; i < m_settings.size(); ++i) {
-        const QString& item = m_settings[i];
+    for (int i = 0; i < items.size(); ++i) {
+        const QString& item = items[i];
         const auto space = item.indexOf(QLatin1Char(' '));
         const QString key = space < 0 ? QString{} : item.left(space);
         const QString value = space < 0 ? item : item.mid(space + 1);
@@ -365,7 +500,7 @@ void PainterPlotBackend::drawSettingsBar(QPainter& painter, QSize size) const
                              QPointF{x - 9.0, bar.bottom() - 6.0});
         }
         if (!key.isEmpty()) {
-            painter.setPen(display.mutedText);
+            painter.setPen(keyColour);
             painter.drawText(QPointF{x, baseline}, key);
             x += keyMetrics.horizontalAdvance(key) + 5.0;
         }
@@ -762,20 +897,31 @@ void PainterPlotBackend::drawVerdict(QPainter& painter, const Layout& layout) co
     }
 }
 
+double PainterPlotBackend::legendHeight(const QFontMetricsF& metrics) const
+{
+    int rows = 0;
+    for (const auto* entry : allSeries(false)) {
+        if (entry->visible && !entry->label.isEmpty()) {
+            ++rows;
+        }
+    }
+    return rows == 0 ? 0.0 : 8.0 + rows * (metrics.height() + 3.0) + 8.0;
+}
+
 void PainterPlotBackend::drawLegend(QPainter& painter, const Layout& layout) const
 {
     const auto display = colours();
     const QFontMetricsF metrics{painter.font()};
 
     double widest = 0.0;
-    int rows = 0;
-    for (const auto& series : m_series) {
+    for (const auto* entry : allSeries(false)) {
+        const auto& series = *entry;
         if (series.visible && !series.label.isEmpty()) {
             widest = std::max(widest, metrics.horizontalAdvance(series.label));
-            ++rows;
         }
     }
-    if (rows == 0) {
+    const double height = legendHeight(metrics);
+    if (height <= 0.0) {
         return;
     }
 
@@ -783,14 +929,15 @@ void PainterPlotBackend::drawLegend(QPainter& painter, const Layout& layout) con
     const QRectF box{layout.plotArea.right() - widest - 44.0,
                      layout.plotArea.top() + 8.0,
                      widest + 36.0,
-                     rows * rowHeight + 8.0};
+                     height - 16.0 + 8.0};
     painter.setPen(QPen{display.frame, 1.0});
     painter.setBrush(translucent(display.background, 225));
     painter.drawRoundedRect(box, 4.0, 4.0);
     painter.setBrush(Qt::NoBrush);
 
     double y = box.top() + 4.0;
-    for (const auto& series : m_series) {
+    for (const auto* entry : allSeries(false)) {
+        const auto& series = *entry;
         if (!series.visible || series.label.isEmpty()) {
             continue;
         }
@@ -848,13 +995,117 @@ void PainterPlotBackend::render(QPainter& painter, QSize size) const
     painter.fillRect(layout.plotArea, display.background);
     drawGrid(painter, layout);
     drawBands(painter, layout);
-    for (const auto& series : m_series) {
+    for (const auto* entry : allSeries(true)) {
+        const auto& series = *entry;
         drawSeries(painter, layout, series);
     }
     drawMarkers(painter, layout);
+    drawUserMarkers(painter, layout, size);
     drawLegend(painter, layout);
     drawVerdict(painter, layout);
     drawFooter(painter, layout);
+}
+
+void PainterPlotBackend::drawUserMarkers(QPainter& painter, const Layout& layout, QSize size) const
+{
+    if (m_userMarkers.isEmpty()) {
+        return;
+    }
+    const auto display = colours();
+    const QFontMetricsF metrics{painter.font()};
+    const auto frequencyText = [](double hertz) {
+        if (hertz >= 1e9) {
+            return QStringLiteral("%1 GHz").arg(hertz / 1e9, 0, 'f', 6);
+        }
+        if (hertz >= 1e6) {
+            return QStringLiteral("%1 MHz").arg(hertz / 1e6, 0, 'f', 4);
+        }
+        return QStringLiteral("%1 kHz").arg(hertz / 1e3, 0, 'f', 3);
+    };
+
+    // The readout goes in a strip under the settings, as an analyzer lists its
+    // markers above the display, so it never covers the trace.
+    QStringList readout;
+    for (const auto& marker : m_userMarkers) {
+        const double level = measuredAmplitudeAt(marker.frequency);
+        const QPointF position{toX(layout, marker.frequency), toY(layout, level)};
+        const auto label = QStringLiteral("M%1").arg(marker.number);
+        readout << QStringLiteral("%1 %2   %3 %4")
+                       .arg(label, frequencyText(marker.frequency))
+                       .arg(level, 0, 'f', 1)
+                       .arg(m_amplitudeLabel);
+        if (!std::isfinite(level) || !layout.plotArea.contains(position)) {
+            continue;
+        }
+        // A diamond on the trace, as analyzers draw a normal marker, named to
+        // its right: above it sits the label of a flagged peak.
+        const QPolygonF diamond{{position + QPointF{0.0, -6.0},
+                                 position + QPointF{6.0, 0.0},
+                                 position + QPointF{0.0, 6.0},
+                                 position + QPointF{-6.0, 0.0}}};
+        painter.setPen(QPen{display.marker, 1.6});
+        painter.setBrush(translucent(display.marker, 90));
+        painter.drawPolygon(diamond);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(display.marker);
+        painter.drawText(position + QPointF{9.0, metrics.ascent() / 2.0 - 1.0}, label);
+    }
+    if (m_userMarkers.size() >= 2) {
+        const auto& first = m_userMarkers.front();
+        const auto& second = m_userMarkers.back();
+        const double delta =
+            measuredAmplitudeAt(second.frequency) - measuredAmplitudeAt(first.frequency);
+        readout << QStringLiteral("M%1−M%2 %3   %4%5 dB")
+                       .arg(second.number)
+                       .arg(first.number)
+                       .arg(frequencyText(std::abs(second.frequency - first.frequency)))
+                       .arg(delta >= 0.0 ? QStringLiteral("+") : QString{})
+                       .arg(delta, 0, 'f', 1);
+    }
+    const double top = Padding + (m_settings.isEmpty() ? 0.0 : BarHeight + 4.0);
+    drawBar(painter,
+            QRectF{Padding, top, size.width() - 2.0 * Padding, BarHeight},
+            readout,
+            display.marker);
+}
+
+void PainterPlotBackend::contextMenuEvent(QContextMenuEvent* event)
+{
+    const Layout layout = layoutFor(size());
+    if (!layout.plotArea.contains(event->pos())) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+    // Snap to the highest point of the measurement close to the click, so a
+    // marker lands on the peak and not on the slope next to it.
+    const double frequency = peakNear(layout, event->pos().x(), 8.0);
+    const bool measured = measurement() != nullptr;
+
+    QMenu menu{this};
+    auto* marker1 = menu.addAction(tr("Marker 1 on this peak"));
+    auto* marker2 = menu.addAction(tr("Marker 2 on this peak"));
+    auto* clear = menu.addAction(tr("Clear markers"));
+    marker1->setEnabled(measured);
+    marker2->setEnabled(measured);
+    clear->setEnabled(!m_userMarkers.isEmpty());
+    menu.addSeparator();
+    auto* measure =
+        menu.addAction(tr("Measure the peak at %1 MHz now").arg(frequency / 1e6, 0, 'f', 4));
+    measure->setToolTip(tr("Dwell on this frequency with the verification detector, "
+                           "without a new scan."));
+    measure->setEnabled(measured && isEnabled());
+
+    const auto* chosen = menu.exec(event->globalPos());
+    if (chosen == marker1) {
+        placeUserMarker(1, frequency);
+    } else if (chosen == marker2) {
+        placeUserMarker(2, frequency);
+    } else if (chosen == clear) {
+        clearUserMarkers();
+    } else if (chosen == measure) {
+        emit measurePeakRequested(frequency);
+    }
+    event->accept();
 }
 
 void PainterPlotBackend::paintEvent(QPaintEvent* /*event*/)

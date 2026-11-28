@@ -21,6 +21,7 @@ class PainterPlotBackend;
 class ResultsDock;
 class RunConfigDock;
 class RunController;
+class TracesDock;
 
 /// Application main window: the Widgets shell of ADR-1.
 ///
@@ -58,6 +59,9 @@ private slots:
     void exportTraceCsv();
     void exportPlotImage();
     void exportPdfReport();
+    /// Dwell on @p frequencies with the verification detector, without a scan,
+    /// and put the results in place of the ones they re-measure.
+    void verifyFrequencies(std::vector<peakemi::Hertz> frequencies);
 
     void onConnectRequested(const peakemi::TransportDescriptor& descriptor,
                             const QString& driverId);
@@ -138,6 +142,11 @@ private:
     Session m_session;
     QString m_sessionPath;
     bool m_dirty{false};
+    TracesDock* m_tracesDock{nullptr};
+    qsizetype m_overlayCount{0};
+    /// The run in progress re-measures chosen peaks rather than scanning.
+    bool m_verifyOnly{false};
+    Hertz m_verifyTolerance{0};
     bool m_connected{false};
     MeasurementEngine::Phase m_phase{MeasurementEngine::Phase::Idle};
 };

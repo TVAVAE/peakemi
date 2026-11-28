@@ -5,6 +5,7 @@
 #include <QDockWidget>
 
 class QLabel;
+class QPushButton;
 class QSortFilterProxyModel;
 class QTableView;
 
@@ -30,17 +31,30 @@ public:
     /// Select the row whose frequency matches, e.g. after a plot marker click.
     void selectFrequency(Hertz frequency);
 
+    /// Whether re-measuring is possible now: an instrument is connected and
+    /// no run is in progress.
+    void setRemeasureEnabled(bool enabled);
+
+    /// Put re-measured points in place of the ones they re-measure -- the
+    /// stored point within @p tolerance of each new one -- and add the rest.
+    void mergePoints(const std::vector<MeasurementPoint>& measured, Hertz tolerance);
+
 signals:
     /// The user selected a row; the plot highlights the matching marker.
     void pointSelected(peakemi::Hertz frequency);
+    /// The user asked for the selected points to be measured again.
+    void remeasureRequested(std::vector<peakemi::Hertz> frequencies);
 
 private:
     void updateSummary();
+    void updateRemeasureButton();
 
     ResultsTableModel* m_model{nullptr};
     QSortFilterProxyModel* m_proxy{nullptr};
     QTableView* m_view{nullptr};
     QLabel* m_summary{nullptr};
+    QPushButton* m_remeasure{nullptr};
+    bool m_remeasureEnabled{false};
 };
 
 } // namespace peakemi::ui
