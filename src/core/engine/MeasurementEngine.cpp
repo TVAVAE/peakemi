@@ -388,38 +388,51 @@ void MeasurementEngine::start()
         return;
     }
 
-    for (int pass = 1; pass <= m_config.passes; ++pass) {
-        if (m_config.passes > 1) {
-            emitLog(tr("Pass %1 of %2.").arg(pass).arg(m_config.passes));
+    // Re-measuring chosen frequencies is one pass over them and no scan.
+    const bool verifyOnly = !m_config.verifyOnly.empty();
+    const int passes = verifyOnly ? 1 : m_config.passes;
+    for (int pass = 1; pass <= passes; ++pass) {
+        if (passes > 1) {
+            emitLog(tr("Pass %1 of %2.").arg(pass).arg(passes));
         }
 
-        auto scan = runPhase1();
-        if (!scan) {
-            const Error& error = scan.error();
-            runStopCommands();
-            if (error.code == ErrorCode::Cancelled) {
+        std::vector<PeakCandidate> candidates;
+        if (verifyOnly) {
+            for (const auto frequency : m_config.verifyOnly) {
+                PeakCandidate candidate;
+                candidate.frequency = frequency;
+                candidates.push_back(candidate);
+            }
+            emitLog(tr("Re-measuring %1 selected peak(s) without a scan.").arg(candidates.size()));
+        } else {
+            auto scan = runPhase1();
+            if (!scan) {
+                const Error& error = scan.error();
+                runStopCommands();
+                if (error.code == ErrorCode::Cancelled) {
+                    emit runFinished(session);
+                    finish(Phase::Aborted);
+                    return;
+                }
+                emit runFailed(error);
                 emit runFinished(session);
-                finish(Phase::Aborted);
+                finish(Phase::Failed);
                 return;
             }
-            emit runFailed(error);
-            emit runFinished(session);
-            finish(Phase::Failed);
-            return;
+
+            Trace corrected = applyCorrections(*scan, m_config.corrections);
+            corrected.label = tr("Phase 1 corrected (pass %1)").arg(pass).toStdString();
+            session.traces.push_back(corrected);
+            emit traceAcquired(makeTracePtr(corrected));
+
+            setPhase(Phase::PeakAnalysis);
+            auto peakSettings = m_config.peaks;
+            peakSettings.marginThresholdDb = m_config.peaks.marginThresholdDb;
+            candidates = detectPeaks(corrected, m_evaluator, peakSettings);
+            emit peaksFlagged(candidates);
+            emitLog(tr("Phase 1 complete: %1 peak(s) flagged for verification.")
+                        .arg(candidates.size()));
         }
-
-        Trace corrected = applyCorrections(*scan, m_config.corrections);
-        corrected.label = tr("Phase 1 corrected (pass %1)").arg(pass).toStdString();
-        session.traces.push_back(corrected);
-        emit traceAcquired(makeTracePtr(corrected));
-
-        setPhase(Phase::PeakAnalysis);
-        auto peakSettings = m_config.peaks;
-        peakSettings.marginThresholdDb = m_config.peaks.marginThresholdDb;
-        const auto candidates = detectPeaks(corrected, m_evaluator, peakSettings);
-        emit peaksFlagged(candidates);
-        emitLog(
-            tr("Phase 1 complete: %1 peak(s) flagged for verification.").arg(candidates.size()));
 
         if (candidates.empty()) {
             continue;

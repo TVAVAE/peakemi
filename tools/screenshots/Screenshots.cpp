@@ -21,6 +21,7 @@
 #include <peakemi/ui/AboutDialog.h>
 #include <peakemi/ui/CampaignDock.h>
 #include <peakemi/ui/CampaignPlot.h>
+#include <peakemi/ui/CurveEditorDialog.h>
 #include <peakemi/ui/InstrumentDock.h>
 #include <peakemi/ui/LogDock.h>
 #include <peakemi/ui/MainWindow.h>
@@ -29,6 +30,7 @@
 #include <peakemi/ui/RunConfigDock.h>
 #include <peakemi/ui/SetupLibraryDialog.h>
 #include <peakemi/ui/Theme.h>
+#include <peakemi/ui/TracesDock.h>
 
 #include <QAction>
 #include <QApplication>
@@ -47,6 +49,7 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <functional>
 
@@ -378,6 +381,46 @@ try {
             out() << "wrote " << reportPath << Qt::endl;
         }
     }
+
+    // Analysis: the measurement against a reference kept before a fix, two
+    // markers with their delta, and the limit line editor.
+    auto* traces = window.findChild<peakemi::ui::TracesDock*>();
+    if (traces == nullptr || window.session().traces.empty()) {
+        out() << "there is no Traces dock or no trace to compare" << Qt::endl;
+        return 1;
+    }
+    // The simulated bench cannot be fixed, so "before" is the measurement with
+    // the emissions around 200 MHz that a ferrite would have taken out put back.
+    auto before = window.session().traces.back();
+    before.label = "Before ferrite";
+    for (int i = 0; i < before.size(); ++i) {
+        const double octaves =
+            std::log10(static_cast<double>(before.axis.frequencyAt(i).value()) / 200e6) / 0.3;
+        before.amplitudes[static_cast<std::size_t>(i)] += 8.0 * std::exp(-octaves * octaves);
+    }
+    traces->addReference(before, QStringLiteral("demo"));
+    auto points = results->points();
+    std::ranges::sort(points, {}, &peakemi::MeasurementPoint::marginDb);
+    if (points.size() >= 2) {
+        plot->placeUserMarker(1, static_cast<double>(points[0].frequency.value()));
+        plot->placeUserMarker(2, static_cast<double>(points[1].frequency.value()));
+    }
+    traces->raise();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    ok = save(window.grab(),
+              directory + QStringLiteral("/analysis") + suffix + QStringLiteral(".png")) &&
+         ok;
+
+    peakemi::ui::CurveEditorDialog editor{peakemi::ui::CurveEditorDialog::Mode::Limit, &window};
+    if (const auto limit = peakemi::builtInLimitLine("CISPR 32 Class B radiated 10 m (QP)")) {
+        editor.setLimit(*limit);
+    }
+    editor.resize(980, 560);
+    editor.show();
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    ok = save(editor.grab(),
+              directory + QStringLiteral("/limit-editor") + suffix + QStringLiteral(".png")) &&
+         ok;
 
     return ok ? 0 : 1;
 } catch (const std::exception& error) {

@@ -40,6 +40,10 @@ private slots:
     void importLimitLine();
     void importCorrectionTable();
     void removeSelectedCorrection();
+    void newLimitLine();
+    void editLimitLine();
+    void newCorrectionTable();
+    void editCorrectionTable();
 
 private:
     void buildWidgets();

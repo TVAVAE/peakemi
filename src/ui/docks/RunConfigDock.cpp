@@ -1,5 +1,6 @@
 #include <peakemi/core/LimitCatalogue.h>
 #include <peakemi/core/LimitLineIo.h>
+#include <peakemi/ui/CurveEditorDialog.h>
 #include <peakemi/ui/RunConfigDock.h>
 
 #include <QCheckBox>
@@ -230,12 +231,22 @@ void RunConfigDock::buildWidgets()
     auto* limitGroup = new QGroupBox{tr("Limit lines"), content};
     auto* limitLayout = new QVBoxLayout{limitGroup};
     m_limits = new QListWidget{limitGroup};
-    m_limits->setSelectionMode(QAbstractItemView::NoSelection);
+    m_limits->setSelectionMode(QAbstractItemView::SingleSelection);
     m_limits->setToolTip(tr("Several limits may be active at once; the worst margin wins"));
     limitLayout->addWidget(m_limits);
-    auto* importLimit = new QPushButton{tr("Import limit line…"), limitGroup};
+    auto* limitButtons = new QHBoxLayout;
+    auto* newLimit = new QPushButton{tr("New…"), limitGroup};
+    auto* editLimit = new QPushButton{tr("Edit…"), limitGroup};
+    editLimit->setToolTip(tr("Edit the selected limit line. A built-in one is copied first."));
+    auto* importLimit = new QPushButton{tr("Import…"), limitGroup};
+    connect(newLimit, &QPushButton::clicked, this, &RunConfigDock::newLimitLine);
+    connect(editLimit, &QPushButton::clicked, this, &RunConfigDock::editLimitLine);
     connect(importLimit, &QPushButton::clicked, this, &RunConfigDock::importLimitLine);
-    limitLayout->addWidget(importLimit);
+    connect(m_limits, &QListWidget::itemDoubleClicked, this, &RunConfigDock::editLimitLine);
+    limitButtons->addWidget(newLimit);
+    limitButtons->addWidget(editLimit);
+    limitButtons->addWidget(importLimit);
+    limitLayout->addLayout(limitButtons);
     outer->addWidget(limitGroup);
 
     auto* correctionGroup = new QGroupBox{tr("Correction tables"), content};
@@ -245,6 +256,14 @@ void RunConfigDock::buildWidgets()
         tr("Antenna factors, cable losses and amplifier gains applied before limit evaluation"));
     correctionLayout->addWidget(m_corrections);
     auto* correctionButtons = new QHBoxLayout;
+    auto* newCorrection = new QPushButton{tr("New…"), correctionGroup};
+    auto* editCorrection = new QPushButton{tr("Edit…"), correctionGroup};
+    connect(newCorrection, &QPushButton::clicked, this, &RunConfigDock::newCorrectionTable);
+    connect(editCorrection, &QPushButton::clicked, this, &RunConfigDock::editCorrectionTable);
+    connect(
+        m_corrections, &QListWidget::itemDoubleClicked, this, &RunConfigDock::editCorrectionTable);
+    correctionButtons->addWidget(newCorrection);
+    correctionButtons->addWidget(editCorrection);
     auto* importCorrection = new QPushButton{tr("Import…"), correctionGroup};
     connect(importCorrection, &QPushButton::clicked, this, &RunConfigDock::importCorrectionTable);
     auto* removeCorrection = new QPushButton{tr("Remove"), correctionGroup};
@@ -494,6 +513,99 @@ void RunConfigDock::importCorrectionTable()
     auto* item = new QListWidgetItem{QString::fromStdString(table->name), m_corrections};
     item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
     item->setCheckState(Qt::Checked);
+    emit configurationChanged();
+}
+
+void RunConfigDock::newLimitLine()
+{
+    LimitLine limit;
+    limit.name = tr("New limit line").toStdString();
+    limit.detector = Detector::QuasiPeak;
+    limit.unit = AmplitudeUnit::dBuV;
+    limit.kind = EmissionKind::Conducted;
+    limit.points = {{.frequency = kilohertz(150), .amplitude = 66.0},
+                    {.frequency = megahertz(30), .amplitude = 60.0}};
+    CurveEditorDialog dialog{CurveEditorDialog::Mode::Limit, this};
+    dialog.setLimit(limit);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto edited = dialog.limit();
+    m_availableLimits.push_back(edited);
+    auto* item = new QListWidgetItem{QString::fromStdString(edited.name), m_limits};
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(Qt::Checked);
+    emit configurationChanged();
+}
+
+void RunConfigDock::editLimitLine()
+{
+    const int row = m_limits->currentRow();
+    if (row < 0 || row >= static_cast<int>(m_availableLimits.size())) {
+        return;
+    }
+    const auto original = m_availableLimits[static_cast<std::size_t>(row)];
+    CurveEditorDialog dialog{CurveEditorDialog::Mode::Limit, this};
+    auto copy = original;
+    if (original.builtIn) {
+        copy.name += tr(" (edited)").toStdString();
+    }
+    dialog.setLimit(copy);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto edited = dialog.limit();
+    if (original.builtIn) {
+        // The catalogue stays as published: the edit becomes a limit of its
+        // own and takes the original's place in the run.
+        m_limits->item(row)->setCheckState(Qt::Unchecked);
+        m_availableLimits.push_back(edited);
+        auto* item = new QListWidgetItem{QString::fromStdString(edited.name), m_limits};
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    } else {
+        m_availableLimits[static_cast<std::size_t>(row)] = edited;
+        m_limits->item(row)->setText(QString::fromStdString(edited.name));
+    }
+    emit configurationChanged();
+}
+
+void RunConfigDock::newCorrectionTable()
+{
+    CorrectionTable table;
+    table.name = tr("New correction").toStdString();
+    table.kind = CorrectionKind::CableLoss;
+    table.points = {{megahertz(30), 0.5}, {gigahertz(1.0), 2.0}};
+    CurveEditorDialog dialog{CurveEditorDialog::Mode::Correction, this};
+    dialog.setCorrection(table);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto edited = dialog.correction();
+    m_correctionTables.push_back(edited);
+    auto* item = new QListWidgetItem{QString::fromStdString(edited.name), m_corrections};
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(edited.enabled ? Qt::Checked : Qt::Unchecked);
+    emit configurationChanged();
+}
+
+void RunConfigDock::editCorrectionTable()
+{
+    const int row = m_corrections->currentRow();
+    if (row < 0 || row >= static_cast<int>(m_correctionTables.size())) {
+        return;
+    }
+    auto table = m_correctionTables[static_cast<std::size_t>(row)];
+    table.enabled = m_corrections->item(row)->checkState() == Qt::Checked;
+    CurveEditorDialog dialog{CurveEditorDialog::Mode::Correction, this};
+    dialog.setCorrection(table);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const auto edited = dialog.correction();
+    m_correctionTables[static_cast<std::size_t>(row)] = edited;
+    m_corrections->item(row)->setText(QString::fromStdString(edited.name));
+    m_corrections->item(row)->setCheckState(edited.enabled ? Qt::Checked : Qt::Unchecked);
     emit configurationChanged();
 }
 

@@ -12,6 +12,7 @@ peakemi_add_module(core
         domain/Capabilities.cpp
         domain/InstrumentId.cpp
         domain/Trace.cpp
+        domain/TraceMath.cpp
         domain/Units.cpp
         engine/MeasurementEngine.cpp
         engine/PeakDetector.cpp
@@ -63,6 +64,7 @@ peakemi_add_module(core
         include/peakemi/core/Time.h
         include/peakemi/core/TestSetup.h
         include/peakemi/core/Trace.h
+        include/peakemi/core/TraceMath.h
         include/peakemi/core/Units.h
     PUBLIC
         Qt6::Core

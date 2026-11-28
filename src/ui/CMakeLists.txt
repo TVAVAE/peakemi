@@ -4,6 +4,7 @@ peakemi_add_module(ui
     SOURCES
         "${PROJECT_SOURCE_DIR}/resources/peakemi.qrc"
         dialogs/AboutDialog.cpp
+        dialogs/CurveEditorDialog.cpp
         dialogs/PluginManagerDialog.cpp
         dialogs/ReportTemplateDialog.cpp
         dialogs/SetupLibraryDialog.cpp
@@ -12,6 +13,7 @@ peakemi_add_module(ui
         docks/LogDock.cpp
         docks/ResultsDock.cpp
         docks/RunConfigDock.cpp
+        docks/TracesDock.cpp
         models/ResultsTableModel.cpp
         models/RunController.cpp
         plot/CampaignPlot.cpp
@@ -23,6 +25,7 @@ peakemi_add_module(ui
         include/peakemi/ui/AboutDialog.h
         include/peakemi/ui/CampaignDock.h
         include/peakemi/ui/CampaignPlot.h
+        include/peakemi/ui/CurveEditorDialog.h
         include/peakemi/ui/IPlotBackend.h
         include/peakemi/ui/InstrumentDock.h
         include/peakemi/ui/LogDock.h
@@ -37,6 +40,7 @@ peakemi_add_module(ui
         include/peakemi/ui/SessionPlot.h
         include/peakemi/ui/SetupLibraryDialog.h
         include/peakemi/ui/Theme.h
+        include/peakemi/ui/TracesDock.h
     PUBLIC
         peakemi::core
         peakemi::hal
