@@ -97,6 +97,8 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
         Stop-Build 'No Visual Studio installation has the C++ x64 build tools.'
     }
     Write-Step "Using the C++ compiler of $vs"
+    # VsDevCmd looks for vswhere on PATH, and says so when it is not there.
+    Add-ToPath (Split-Path -Parent $vswhere)
     Import-Module (Join-Path $vs 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
     Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation `
         -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
