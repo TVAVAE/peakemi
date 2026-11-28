@@ -1,7 +1,9 @@
+#include <peakemi/core/Campaign.h>
 #include <peakemi/core/LimitLineIo.h>
 #include <peakemi/core/SetupLibrary.h>
 #include <peakemi/reporting/SetupSheetRenderer.h>
 #include <peakemi/ui/CurveEditorDialog.h>
+#include <peakemi/ui/SetupDiagramView.h>
 #include <peakemi/ui/SetupLibraryDialog.h>
 
 #include <QComboBox>
@@ -88,16 +90,7 @@ const QString DirectoryKey = QStringLiteral("setups/directory");
 /// What a device role usually corrects for, offered when it is added.
 [[nodiscard]] std::optional<CorrectionTable> defaultCorrectionFor(const QString& role)
 {
-    if (role == QObject::tr("Attenuator")) {
-        return flatCorrection("Attenuator", CorrectionKind::Attenuator, 10.0);
-    }
-    if (role == QObject::tr("Transient limiter")) {
-        return flatCorrection("Transient limiter", CorrectionKind::Attenuator, 10.0);
-    }
-    if (role == QObject::tr("Preamplifier")) {
-        return flatCorrection("Preamplifier", CorrectionKind::AmplifierGain, 20.0);
-    }
-    return std::nullopt;
+    return newDeviceFor(str(role)).correction;
 }
 
 /// The kind of table a device role calls for, for a table written from scratch.
@@ -144,7 +137,7 @@ SetupLibraryDialog::SetupLibraryDialog(QWidget* parent) : QDialog{parent}
 {
     setWindowTitle(tr("Test set-ups"));
     setObjectName(QStringLiteral("setupLibraryDialog"));
-    resize(1100, 620);
+    resize(1180, 780);
     buildUi();
     reload();
 }
@@ -190,9 +183,9 @@ void SetupLibraryDialog::buildUi()
 
     m_new = new QPushButton{tr("New"), left};
     auto* newMenu = new QMenu{m_new};
-    newMenu->addAction(tr("Conducted set-up"), this, [this] { newSetup(TestKind::Conducted); });
-    newMenu->addAction(tr("Radiated set-up"), this, [this] { newSetup(TestKind::Radiated); });
-    newMenu->addAction(tr("Other set-up"), this, [this] { newSetup(TestKind::Other); });
+    for (const auto method : setupMethods()) {
+        newMenu->addAction(qs(setupMethodName(method)), this, [this, method] { newSetup(method); });
+    }
     m_new->setMenu(newMenu);
     m_duplicate = new QPushButton{tr("Duplicate"), left};
     m_delete = new QPushButton{tr("Delete"), left};
@@ -218,17 +211,19 @@ void SetupLibraryDialog::buildUi()
     rightLayout->setContentsMargins(6, 0, 0, 0);
     auto* form = new QFormLayout;
     m_name = new QLineEdit{right};
-    m_kind = new QComboBox{right};
-    for (const auto kind : {TestKind::Conducted, TestKind::Radiated, TestKind::Other}) {
-        m_kind->addItem(kindName(kind), static_cast<int>(kind));
+    m_method = new QComboBox{right};
+    for (const auto method : setupMethods()) {
+        m_method->addItem(qs(setupMethodName(method)), static_cast<int>(method));
     }
+    m_method->setToolTip(tr("How the equipment under test is coupled to the analyzer: it "
+                            "decides the blocks the diagram offers."));
     m_description = new QPlainTextEdit{right};
     m_description->setPlaceholderText(
         tr("Layout, distances, grounding, cable routing: what someone rebuilding this bench "
            "needs to know."));
     m_description->setMaximumHeight(80);
     form->addRow(tr("Name"), m_name);
-    form->addRow(tr("Type"), m_kind);
+    form->addRow(tr("Method"), m_method);
     form->addRow(tr("Description"), m_description);
     rightLayout->addLayout(form);
     connect(m_name, &QLineEdit::textEdited, this, [this](const QString& text) {
@@ -240,10 +235,12 @@ void SetupLibraryDialog::buildUi()
             markDirty();
         }
     });
-    connect(m_kind, &QComboBox::currentIndexChanged, this, [this] {
+    connect(m_method, &QComboBox::currentIndexChanged, this, [this] {
         if (auto* setup = current(); setup != nullptr && !m_updating) {
-            setup->kind = static_cast<TestKind>(m_kind->currentData().toInt());
+            setup->method = static_cast<SetupMethod>(m_method->currentData().toInt());
+            setup->kind = kindOf(setup->method);
             markDirty();
+            refreshDevices();
             refreshSummary();
         }
     });
@@ -254,8 +251,34 @@ void SetupLibraryDialog::buildUi()
         }
     });
 
-    rightLayout->addWidget(new QLabel{
-        tr("<b>Signal chain</b> — from the equipment under test to the analyzer"), right});
+    rightLayout->addWidget(new QLabel{tr("<b>Set-up</b> — click a block to pick its device; its "
+                                         "switch takes it in or out of the set-up"),
+                                      right});
+    m_diagram = new SetupDiagramView{right};
+    rightLayout->addWidget(m_diagram);
+    connect(m_diagram, &SetupDiagramView::deviceSelected, this, [this](int device) {
+        m_devices->selectRow(device);
+    });
+    connect(m_diagram, &SetupDiagramView::deviceActivated, this, [this](int device) {
+        m_devices->selectRow(device);
+        m_devices->editItem(m_devices->item(device, ColumnModel));
+    });
+    connect(m_diagram, &SetupDiagramView::slotSwitched, this, &SetupLibraryDialog::switchSlot);
+    connect(m_diagram, &SetupDiagramView::deviceSwitched, this, [this](int device, bool inUse) {
+        auto* setup = current();
+        if (setup == nullptr || device < 0 ||
+            static_cast<std::size_t>(device) >= setup->devices.size())
+        {
+            return;
+        }
+        setup->devices[static_cast<std::size_t>(device)].inUse = inUse;
+        markDirty();
+        refreshDevices();
+        refreshSummary();
+    });
+
+    rightLayout->addWidget(
+        new QLabel{tr("<b>Devices</b> — in signal order; untick one to switch it off"), right});
     m_devices = new QTableWidget{0, DeviceColumnCount, right};
     m_devices->setHorizontalHeaderLabels({tr("Role"),
                                           tr("Model"),
@@ -289,6 +312,7 @@ void SetupLibraryDialog::buildUi()
         switch (item->column()) {
             case ColumnRole:
                 device.equipment.role = value;
+                device.inUse = item->checkState() != Qt::Unchecked;
                 break;
             case ColumnModel:
                 device.equipment.model = value;
@@ -306,15 +330,19 @@ void SetupLibraryDialog::buildUi()
                 return;
         }
         markDirty();
-        if (item->column() == ColumnCalibration) {
+        // A new role or a switch moves the device in the diagram; a new date
+        // can change its colour.
+        if (item->column() == ColumnCalibration || item->column() == ColumnRole) {
             refreshDevices();
             refreshSummary();
+        } else {
+            refreshDiagram();
         }
     });
-    connect(m_devices,
-            &QTableWidget::itemSelectionChanged,
-            this,
-            &SetupLibraryDialog::updateEnabledState);
+    connect(m_devices, &QTableWidget::itemSelectionChanged, this, [this] {
+        m_diagram->setSelectedDevice(m_devices->currentRow());
+        updateEnabledState();
+    });
 
     auto* deviceButtons = new QHBoxLayout;
     m_addDevice = new QPushButton{tr("Add device"), right};
@@ -327,6 +355,10 @@ void SetupLibraryDialog::buildUi()
                              tr("Antenna"),
                              tr("RF cable"),
                              tr("Current probe"),
+                             tr("TEM cell"),
+                             tr("Near-field probe"),
+                             tr("Isolation transformer"),
+                             tr("Power supply"),
                              tr("Other")})
     {
         deviceMenu->addAction(role, this, [this, role] { addDevice(role); });
@@ -447,7 +479,7 @@ void SetupLibraryDialog::refreshList()
     m_list->clear();
     for (const auto& setup : m_setups) {
         auto* item = new QListWidgetItem{qs(setup.name), m_list};
-        item->setToolTip(kindName(setup.kind));
+        item->setToolTip(qs(setupMethodName(setup.method)));
     }
     m_updating = false;
 }
@@ -475,7 +507,8 @@ void SetupLibraryDialog::showCurrent()
     const auto* setup = current();
     m_updating = true;
     m_name->setText(setup != nullptr ? qs(setup->name) : QString{});
-    m_kind->setCurrentIndex(setup != nullptr ? m_kind->findData(static_cast<int>(setup->kind)) : 0);
+    m_method->setCurrentIndex(
+        setup != nullptr ? std::max(0, m_method->findData(static_cast<int>(setup->method))) : 0);
     m_description->setPlainText(setup != nullptr ? qs(setup->description) : QString{});
     m_updating = false;
     refreshDevices();
@@ -510,13 +543,23 @@ void SetupLibraryDialog::refreshDevices()
             if (column == ColumnCorrection) {
                 item->setFlags(item->flags() & ~Qt::ItemIsEditable);
             }
+            // A device switched off stays listed, greyed, to switch on again.
+            item->setForeground(
+                palette().color(device.inUse ? QPalette::Text : QPalette::PlaceholderText));
         }
+        auto* role = m_devices->item(row, ColumnRole);
+        role->setFlags(role->flags() | Qt::ItemIsUserCheckable);
+        role->setCheckState(device.inUse ? Qt::Checked : Qt::Unchecked);
+        role->setToolTip(device.inUse ? tr("In use. Untick to switch it off: it stays listed but "
+                                           "is not in the equipment list and corrects nothing.")
+                                      : tr("Switched off. Tick to use it again."));
         auto* due = m_devices->item(row, ColumnCalibration);
-        if (device.equipment.calibrationExpired(now)) {
+        if (!device.inUse) {
+            due->setToolTip(QString{});
+        } else if (device.equipment.calibrationExpired(now)) {
             due->setForeground(dark ? QColor{0xFF, 0xA9, 0xA0} : QColor{0xC5, 0x22, 0x1F});
             due->setToolTip(tr("Calibration expired"));
         } else {
-            due->setForeground(palette().color(QPalette::Text));
             due->setToolTip(QString{});
         }
     }
@@ -524,6 +567,33 @@ void SetupLibraryDialog::refreshDevices()
         m_devices->selectRow(selected);
     }
     m_updating = false;
+    refreshDiagram();
+}
+
+void SetupLibraryDialog::refreshDiagram()
+{
+    m_diagram->setSetup(current());
+    m_diagram->setSelectedDevice(m_devices->currentRow());
+}
+
+void SetupLibraryDialog::switchSlot(int slot, bool inUse)
+{
+    auto* setup = current();
+    if (setup == nullptr) {
+        return;
+    }
+    const auto before = setup->devices.size();
+    const int device = setup->setSlotInUse(slot, inUse);
+    markDirty();
+    refreshDevices();
+    refreshSummary();
+    if (device >= 0 && inUse) {
+        m_devices->selectRow(device);
+        if (setup->devices.size() > before) {
+            // A device just added: its model is the first thing to enter.
+            m_devices->editItem(m_devices->item(device, ColumnModel));
+        }
+    }
 }
 
 void SetupLibraryDialog::refreshSummary()
@@ -569,7 +639,7 @@ void SetupLibraryDialog::updateEnabledState()
     const int device = m_devices->currentRow();
     const int devices = m_devices->rowCount();
     for (QWidget* widget : std::initializer_list<QWidget*>{
-             m_name, m_kind, m_description, m_devices, m_addDevice, m_print, m_export})
+             m_name, m_method, m_description, m_diagram, m_devices, m_addDevice, m_print, m_export})
     {
         widget->setEnabled(selected);
     }
@@ -626,14 +696,13 @@ bool SetupLibraryDialog::confirmLeave()
     return false;
 }
 
-void SetupLibraryDialog::newSetup(TestKind kind)
+void SetupLibraryDialog::newSetup(SetupMethod method)
 {
     if (!confirmLeave()) {
         return;
     }
-    auto setup = TestSetup::createNew(str(tr("New %1 set-up").arg(kindName(kind).toLower())), kind);
-    setup.devices.push_back(
-        SetupDevice{.equipment = EquipmentItem{.role = str(tr("Spectrum analyzer"))}});
+    auto setup = TestSetup::createFor(
+        str(tr("New %1 set-up").arg(kindName(kindOf(method)).toLower())), method);
     m_setups.push_back(std::move(setup));
     refreshList();
     selectRow(static_cast<int>(m_setups.size()) - 1);

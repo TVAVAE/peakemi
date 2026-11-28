@@ -29,7 +29,8 @@ std::string SessionSerializer::toJson(const Session& session, bool pretty)
                         {"meta", json_io::toJson(session.meta)},
                         {"config", json_io::toJson(session.config)},
                         {"traces", std::move(traces)},
-                        {"results", std::move(results)}};
+                        {"results", std::move(results)},
+                        {"setup", session.setup ? json_io::toJson(*session.setup) : Json(nullptr)}};
     return pretty ? document.dump(2) : document.dump();
 }
 
@@ -82,6 +83,13 @@ Result<Session> SessionSerializer::fromJson(std::string_view text)
             }
             session.results.push_back(std::move(*parsed));
         }
+    }
+    if (document.contains("setup") && document.at("setup").is_object()) {
+        auto setup = json_io::testSetupFromJson(document.at("setup"));
+        if (!setup) {
+            return std::unexpected(setup.error());
+        }
+        session.setup = std::move(*setup);
     }
     return session;
 }

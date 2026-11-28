@@ -23,8 +23,9 @@ namespace {
 
 /// Spectrum images are drawn at this size and scaled to the text width.
 constexpr QSize SpectrumSize{1800, 760};
-/// Text width of an A4 page with 15 mm margins, in the document's units.
-constexpr int PageWidth = 660;
+/// Text width of an A4 page with the 2 cm margins print() adds, in the
+/// document's units.
+constexpr int PageWidth = 640;
 constexpr int PhotoWidth = 320;
 
 [[nodiscard]] QString qs(std::string_view text)
@@ -442,7 +443,10 @@ Status CampaignReportRenderer::render(const Campaign& campaign,
 
     QPdfWriter writer{path};
     writer.setPageSize(QPageSize{QPageSize::A4});
-    writer.setPageMargins(QMarginsF{15.0, 15.0, 15.0, 15.0}, QPageLayout::Millimeter);
+    // No margin of the writer's own: QTextDocument::print() puts 2 cm round an
+    // unpaginated document, and the two together left images hanging off the
+    // page. 2 cm leaves 170 mm, about 640 of the document's pixels.
+    writer.setPageMargins(QMarginsF{0.0, 0.0, 0.0, 0.0}, QPageLayout::Millimeter);
     writer.setTitle(reportTemplate.title.empty() ? QStringLiteral("EMC pre-compliance test report")
                                                  : qs(reportTemplate.title));
     writer.setCreator(QStringLiteral("PeakEmi %1").arg(qs(campaign.applicationVersion)));

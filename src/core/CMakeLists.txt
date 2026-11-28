@@ -38,6 +38,7 @@ peakemi_add_module(core
         include/peakemi/core/AbstractAnalyzerDriver.h
         include/peakemi/core/AtomicFileWriter.h
         include/peakemi/core/Campaign.h
+        include/peakemi/core/Equipment.h
         include/peakemi/core/CampaignSerializer.h
         include/peakemi/core/CancelToken.h
         include/peakemi/core/Capabilities.h

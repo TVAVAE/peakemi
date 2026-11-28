@@ -113,6 +113,7 @@ private:
     void showSetupLibrary(const std::optional<TestSetup>& unsaved);
     /// To the selected campaign test, or else to the run configuration.
     void applySetupFromLibrary(const TestSetup& setup);
+    void applySetupToSession(const TestSetup& setup);
     void log(const QString& message);
     [[nodiscard]] bool confirmDiscardChanges();
     [[nodiscard]] QString autosavePathFor(const QString& runId) const;

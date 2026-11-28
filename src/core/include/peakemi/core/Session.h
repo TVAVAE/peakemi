@@ -2,6 +2,7 @@
 
 #include <peakemi/core/MeasurementPoint.h>
 #include <peakemi/core/RunConfiguration.h>
+#include <peakemi/core/TestSetup.h>
 #include <peakemi/core/Trace.h>
 
 #include <optional>
@@ -35,6 +36,9 @@ struct Session
     RunConfiguration config;
     std::vector<Trace> traces;
     std::vector<MeasurementPoint> results;
+    /// The bench it was measured on, as it was when chosen: a copy, so the
+    /// session documents the set-up even after the library's entry changes.
+    std::optional<TestSetup> setup;
 
     [[nodiscard]] bool isEmpty() const { return traces.empty() && results.empty(); }
 

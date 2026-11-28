@@ -160,12 +160,13 @@ the dark variant.
   comments, equipment with calibration due dates, setup photos and a signature; the
   campaign is signed off by tester and reviewer, can be locked, and produces one PDF
   report. See [docs/campaigns-design.md](docs/campaigns-design.md).
-* **Test set-ups**: a bench documented as its signal chain, from the equipment under test
-  to the analyzer: every device's model, serial number, calibration due date, notes and
-  correction (a fixed value or an imported table). Set-ups are saved in a library folder that
-  can be shared, printed as a one-page sheet, and applied to a campaign test or to the run
-  configuration, which fills in the equipment and the corrections together. See
-  [docs/test-setups.md](docs/test-setups.md).
+* **Test set-ups**: a bench documented as a block diagram of its measurement method (AC or DC
+  LISN, current probe, antenna, TEM cell, near-field probe) with each block switched on or
+  off, and as its signal chain: every device's model, serial number, calibration due date,
+  notes and correction (a fixed value or an imported table). Set-ups are saved in a library
+  folder that can be shared, printed as a one-page sheet with the diagram, chosen when a new
+  session starts, and applied to a campaign test or to the run configuration, which fills in
+  the equipment and the corrections together. See [docs/test-setups.md](docs/test-setups.md).
 * **Analysis on the bench**: reference traces from earlier sessions or exported CSV,
   overlaid in their own colours; trace math (worst case, minimum, average, difference);
   two markers with their delta; and re-measuring selected peaks with the verification

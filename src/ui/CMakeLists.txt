@@ -7,6 +7,7 @@ peakemi_add_module(ui
         dialogs/CurveEditorDialog.cpp
         dialogs/PluginManagerDialog.cpp
         dialogs/ReportTemplateDialog.cpp
+        dialogs/SessionSetupDialog.cpp
         dialogs/SetupLibraryDialog.cpp
         docks/CampaignDock.cpp
         docks/InstrumentDock.cpp
@@ -20,6 +21,7 @@ peakemi_add_module(ui
         plot/PainterPlotBackend.cpp
         plot/SessionPlot.cpp
         theme/Theme.cpp
+        widgets/SetupDiagramView.cpp
         windows/MainWindow.cpp
     HEADERS
         include/peakemi/ui/AboutDialog.h
@@ -38,6 +40,8 @@ peakemi_add_module(ui
         include/peakemi/ui/RunConfigDock.h
         include/peakemi/ui/RunController.h
         include/peakemi/ui/SessionPlot.h
+        include/peakemi/ui/SessionSetupDialog.h
+        include/peakemi/ui/SetupDiagramView.h
         include/peakemi/ui/SetupLibraryDialog.h
         include/peakemi/ui/Theme.h
         include/peakemi/ui/TracesDock.h

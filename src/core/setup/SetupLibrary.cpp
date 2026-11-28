@@ -1,6 +1,7 @@
 #include "session/JsonConversions.h"
 
 #include <peakemi/core/AtomicFileWriter.h>
+#include <peakemi/core/Campaign.h>
 #include <peakemi/core/Logging.h>
 #include <peakemi/core/SetupLibrary.h>
 
@@ -36,7 +37,9 @@ constexpr const char* SchemaName = "peakemi.setup";
 
 } // namespace
 
-std::string TestSetupSerializer::toJson(const TestSetup& setup, bool pretty)
+namespace json_io {
+
+Json toJson(const TestSetup& setup)
 {
     Json devices = Json::array();
     for (const auto& device : setup.devices) {
@@ -44,20 +47,69 @@ std::string TestSetupSerializer::toJson(const TestSetup& setup, bool pretty)
                    {"model", device.equipment.model},
                    {"serial", device.equipment.serial},
                    {"calibration_due", device.equipment.calibrationDue},
-                   {"notes", device.notes}};
+                   {"notes", device.notes},
+                   {"in_use", device.inUse}};
         entry["correction"] =
             device.correction ? json_io::toJson(*device.correction) : Json(nullptr);
         devices.push_back(std::move(entry));
     }
-    const Json document{{"schema", SchemaName},
-                        {"schema_version", CurrentSchemaVersion},
-                        {"id", setup.id},
-                        {"name", setup.name},
-                        {"kind", std::string{testKindKey(setup.kind)}},
-                        {"description", setup.description},
-                        {"created_at", timeText(setup.createdAt)},
-                        {"modified_at", timeText(setup.modifiedAt)},
-                        {"devices", std::move(devices)}};
+    return Json{{"id", setup.id},
+                {"name", setup.name},
+                {"kind", std::string{testKindKey(setup.kind)}},
+                {"method", std::string{setupMethodKey(setup.method)}},
+                {"description", setup.description},
+                {"created_at", timeText(setup.createdAt)},
+                {"modified_at", timeText(setup.modifiedAt)},
+                {"devices", std::move(devices)}};
+}
+
+Result<TestSetup> testSetupFromJson(const Json& document)
+{
+    TestSetup setup;
+    setup.id = text(document, "id");
+    setup.name = text(document, "name");
+    setup.kind = testKindFromKey(text(document, "kind")).value_or(TestKind::Other);
+    // Written before set-ups had a method: the usual one for their kind.
+    setup.method =
+        setupMethodFromKey(text(document, "method")).value_or(defaultMethodFor(setup.kind));
+    setup.description = text(document, "description");
+    setup.createdAt = fromIso8601(text(document, "created_at")).value_or(TimePoint{});
+    setup.modifiedAt = fromIso8601(text(document, "modified_at")).value_or(TimePoint{});
+    if (setup.id.empty()) {
+        setup.id = newIdentifier();
+    }
+    if (document.contains("devices") && document.at("devices").is_array()) {
+        for (const auto& entry : document.at("devices")) {
+            SetupDevice device;
+            device.equipment = EquipmentItem{.role = text(entry, "role"),
+                                             .model = text(entry, "model"),
+                                             .serial = text(entry, "serial"),
+                                             .calibrationDue = text(entry, "calibration_due")};
+            device.notes = text(entry, "notes");
+            const auto inUse = entry.find("in_use");
+            device.inUse = inUse == entry.end() || !inUse->is_boolean() || inUse->get<bool>();
+            if (entry.contains("correction") && entry.at("correction").is_object()) {
+                auto table = json_io::correctionTableFromJson(entry.at("correction"));
+                if (!table) {
+                    return std::unexpected(table.error());
+                }
+                device.correction = std::move(*table);
+            }
+            setup.devices.push_back(std::move(device));
+        }
+    }
+    if (auto status = setup.validate(); !status) {
+        return fail(ErrorCode::ParseFailure, status.error().detail);
+    }
+    return setup;
+}
+
+} // namespace json_io
+
+std::string TestSetupSerializer::toJson(const TestSetup& setup, bool pretty)
+{
+    Json document{{"schema", SchemaName}, {"schema_version", CurrentSchemaVersion}};
+    document.update(json_io::toJson(setup));
     return pretty ? document.dump(2) : document.dump();
 }
 
@@ -77,39 +129,7 @@ Result<TestSetup> TestSetupSerializer::fromJson(std::string_view content)
                         (version > CurrentSchemaVersion ? " was written by a newer PeakEmi"
                                                         : " is too old"));
     }
-
-    TestSetup setup;
-    setup.id = text(document, "id");
-    setup.name = text(document, "name");
-    setup.kind = testKindFromKey(text(document, "kind")).value_or(TestKind::Other);
-    setup.description = text(document, "description");
-    setup.createdAt = fromIso8601(text(document, "created_at")).value_or(TimePoint{});
-    setup.modifiedAt = fromIso8601(text(document, "modified_at")).value_or(TimePoint{});
-    if (setup.id.empty()) {
-        setup.id = newIdentifier();
-    }
-    if (document.contains("devices") && document.at("devices").is_array()) {
-        for (const auto& entry : document.at("devices")) {
-            SetupDevice device;
-            device.equipment = EquipmentItem{.role = text(entry, "role"),
-                                             .model = text(entry, "model"),
-                                             .serial = text(entry, "serial"),
-                                             .calibrationDue = text(entry, "calibration_due")};
-            device.notes = text(entry, "notes");
-            if (entry.contains("correction") && entry.at("correction").is_object()) {
-                auto table = json_io::correctionTableFromJson(entry.at("correction"));
-                if (!table) {
-                    return std::unexpected(table.error());
-                }
-                device.correction = std::move(*table);
-            }
-            setup.devices.push_back(std::move(device));
-        }
-    }
-    if (auto status = setup.validate(); !status) {
-        return fail(ErrorCode::ParseFailure, status.error().detail);
-    }
-    return setup;
+    return json_io::testSetupFromJson(document);
 }
 
 Status TestSetupSerializer::save(const TestSetup& setup, const QString& path)

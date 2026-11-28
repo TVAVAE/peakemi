@@ -1,4 +1,5 @@
 #include <peakemi/core/Time.h>
+#include <peakemi/reporting/SetupDiagram.h>
 #include <peakemi/reporting/SetupSheetRenderer.h>
 
 #include <QFileInfo>
@@ -8,6 +9,7 @@
 #include <QPageSize>
 #include <QPdfWriter>
 #include <QTextDocument>
+#include <QUrl>
 
 #include <algorithm>
 #include <chrono>
@@ -15,6 +17,14 @@
 
 namespace peakemi::reporting {
 namespace {
+
+/// Where the sheet's rich text finds the diagram image.
+constexpr auto DiagramUrl = "peakemi-setup:diagram";
+/// Text width of an A4 page with the 2 cm margins print() adds, in the
+/// document's pixels.
+constexpr double PageWidth = 640.0;
+/// The diagram is drawn at twice the size it is shown, so it stays sharp in print.
+constexpr double DiagramScale = 2.0;
 
 [[nodiscard]] QString qs(std::string_view text)
 {
@@ -124,7 +134,7 @@ QString SetupSheetRenderer::html(const TestSetup& setup, const ReportTemplate& r
             QStringLiteral(R"(<tr><td style="color:#5F6368;" width="28%">%1</td><td>%2</td></tr>)")
                 .arg(key, value);
     };
-    row(QStringLiteral("Type"), qs(testKindKey(setup.kind)));
+    row(QStringLiteral("Method"), qs(setupMethodName(setup.method)));
     row(QStringLiteral("Last changed"),
         setup.modifiedAt == TimePoint{} ? QStringLiteral("&ndash;")
                                         : qs(toIso8601(setup.modifiedAt)).left(10));
@@ -142,12 +152,21 @@ QString SetupSheetRenderer::html(const TestSetup& setup, const ReportTemplate& r
         html += QStringLiteral("<h2>Description</h2><p>%1</p>").arg(escaped(setup.description));
     }
 
+    // The diagram first: how the bench is built, then what it is built from.
+    const SetupDiagram diagram{setup, false};
+    html += QStringLiteral(R"(<h2>Diagram</h2><p><img src="%1" width="%2"></p>)")
+                .arg(QString::fromLatin1(DiagramUrl))
+                .arg(std::min(PageWidth, diagram.size().width()));
+
     html += QStringLiteral(
-        R"(<h2>Signal chain</h2><p style="color:#5F6368;">From the equipment under test to the analyzer.</p>)");
+        R"(<h2>Signal chain</h2><p style="color:#5F6368;">The devices in use, from the equipment under test to the analyzer.</p>)");
     html += QStringLiteral(
         R"(<table border="1" cellspacing="0" cellpadding="3" width="100%"><tr style="background-color:#F1F3F4;"><th>#</th><th>Role</th><th>Model</th><th>Serial number</th><th>Calibration due</th><th>Correction</th><th>Notes</th></tr>)");
-    for (std::size_t i = 0; i < setup.devices.size(); ++i) {
-        const auto& device = setup.devices[i];
+    int number = 0;
+    for (const auto& device : setup.devices) {
+        if (!device.inUse) {
+            continue;
+        }
         QString due = orDash(device.equipment.calibrationDue);
         if (device.equipment.calibrationExpired(asOf)) {
             due = QStringLiteral(
@@ -164,7 +183,7 @@ QString SetupSheetRenderer::html(const TestSetup& setup, const ReportTemplate& r
         }
         html += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</"
                                "td><td>%7</td></tr>")
-                    .arg(i + 1)
+                    .arg(++number)
                     .arg(orDash(device.equipment.role),
                          orDash(device.equipment.model),
                          orDash(device.equipment.serial),
@@ -172,7 +191,7 @@ QString SetupSheetRenderer::html(const TestSetup& setup, const ReportTemplate& r
                          correction,
                          orDash(device.notes));
     }
-    if (setup.devices.empty()) {
+    if (number == 0) {
         html += QStringLiteral(R"(<tr><td colspan="7">No devices listed.</td></tr>)");
     }
     html += QStringLiteral("</table>");
@@ -206,10 +225,17 @@ Status SetupSheetRenderer::render(const TestSetup& setup,
     font.setPointSize(9);
     document.setDefaultFont(font);
     document.setHtml(html(setup, reportTemplate));
+    document.addResource(
+        QTextDocument::ImageResource,
+        QUrl{QString::fromLatin1(DiagramUrl)},
+        SetupDiagram{setup, false}.toImage(DiagramScale, DiagramColours::forPrint()));
 
     QPdfWriter writer{path};
     writer.setPageSize(QPageSize{QPageSize::A4});
-    writer.setPageMargins(QMarginsF{15.0, 15.0, 15.0, 15.0}, QPageLayout::Millimeter);
+    // No margin of the writer's own: QTextDocument::print() puts 2 cm round an
+    // unpaginated document, and the two together left images hanging off the
+    // page. 2 cm leaves 170 mm, about 640 of the document's pixels.
+    writer.setPageMargins(QMarginsF{0.0, 0.0, 0.0, 0.0}, QPageLayout::Millimeter);
     writer.setTitle(QStringLiteral("Test set-up: %1").arg(qs(setup.name)));
     writer.setCreator(QStringLiteral("PeakEmi"));
     document.print(&writer);

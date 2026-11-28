@@ -17,6 +17,8 @@
 #include <peakemi/core/SetupLibrary.h>
 #include <peakemi/drivers/SimulatedDriver.h>
 #include <peakemi/reporting/CampaignReportRenderer.h>
+#include <peakemi/reporting/PdfReportRenderer.h>
+#include <peakemi/reporting/SetupDiagram.h>
 #include <peakemi/reporting/SetupSheetRenderer.h>
 #include <peakemi/ui/AboutDialog.h>
 #include <peakemi/ui/CampaignDock.h>
@@ -28,6 +30,7 @@
 #include <peakemi/ui/PainterPlotBackend.h>
 #include <peakemi/ui/ResultsDock.h>
 #include <peakemi/ui/RunConfigDock.h>
+#include <peakemi/ui/SessionSetupDialog.h>
 #include <peakemi/ui/SetupLibraryDialog.h>
 #include <peakemi/ui/Theme.h>
 #include <peakemi/ui/TracesDock.h>
@@ -39,12 +42,14 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
+#include <QPainter>
 #include <QPalette>
 #include <QPixmap>
 #include <QSettings>
 #include <QStringList>
 #include <QStyleHints>
 #include <QTabBar>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTextStream>
 
@@ -52,6 +57,8 @@
 #include <cmath>
 #include <exception>
 #include <functional>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -353,9 +360,57 @@ try {
         peakemi::ui::SetupLibraryDialog setups{&window};
         setups.setApplyTarget(QStringLiteral("test 'Radiated emissions – horizontal'"));
         setups.show();
+        // The limiter picked, to show a selected block.
+        if (auto* devices = setups.findChild<QTableWidget*>()) {
+            devices->selectRow(1);
+        }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
         ok = save(setups.grab(),
                   directory + QStringLiteral("/test-setups") + suffix + QStringLiteral(".png")) &&
+             ok;
+    }
+    {
+        // Every method's diagram as a new set-up of it starts, for the docs.
+        const auto colours = peakemi::reporting::DiagramColours::from(application.palette());
+        std::vector<std::pair<QString, QImage>> panels;
+        int width = 0;
+        int height = 0;
+        for (const auto method : peakemi::setupMethods()) {
+            const auto setup = peakemi::TestSetup::createFor("", method);
+            QImage image = peakemi::reporting::SetupDiagram{setup, true}.toImage(1.0, colours);
+            width = std::max(width, image.width());
+            height += image.height() + 30;
+            const auto name = peakemi::setupMethodName(method);
+            panels.emplace_back(QString::fromUtf8(name.data(), static_cast<qsizetype>(name.size())),
+                                std::move(image));
+        }
+        QImage gallery{width, height, QImage::Format_ARGB32_Premultiplied};
+        gallery.fill(colours.background);
+        QPainter painter{&gallery};
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSizeF(10.0);
+        painter.setFont(font);
+        painter.setPen(colours.text);
+        int y = 0;
+        for (const auto& [title, image] : panels) {
+            painter.drawText(
+                QRectF{14.0, y + 8.0, width - 28.0, 22.0}, Qt::AlignLeft | Qt::AlignVCenter, title);
+            y += 30;
+            painter.drawImage(0, y, image);
+            y += image.height();
+        }
+        painter.end();
+        ok = save(QPixmap::fromImage(gallery),
+                  directory + QStringLiteral("/setup-methods") + suffix + QStringLiteral(".png")) &&
+             ok;
+    }
+    {
+        peakemi::ui::SessionSetupDialog chooser{&window};
+        chooser.show();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 200);
+        ok = save(chooser.grab(),
+                  directory + QStringLiteral("/new-session") + suffix + QStringLiteral(".png")) &&
              ok;
     }
     if (!reportPath.isEmpty()) {
@@ -364,6 +419,17 @@ try {
         const peakemi::reporting::SetupSheetRenderer sheet;
         if (sheet.render(conductedBench, peakemi::ReportTemplate{}, sheetPath)) {
             out() << "wrote " << sheetPath << Qt::endl;
+        }
+        // The run's own report, as if it had been measured on the radiated bench.
+        auto session = window.session();
+        session.setup = radiatedBench;
+        session.meta.testSetup = radiatedBench.name;
+        const auto sessionPath =
+            QFileInfo{reportPath}.absolutePath() + QStringLiteral("/session-report.pdf");
+        peakemi::reporting::PdfReportRenderer sessionReport;
+        sessionReport.setPlotImage(plot->renderToImage(QSize{1800, 760}));
+        if (sessionReport.render(session, peakemi::ReportTemplate{}, sessionPath)) {
+            out() << "wrote " << sessionPath << Qt::endl;
         }
     }
 
